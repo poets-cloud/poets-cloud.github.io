@@ -1,0 +1,36 @@
+{
+  "name": "poets-cloud",
+  "version": "1.0.0",
+  "description": "沉浸式、可搜索、按需加载的三维诗词星云。",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "python -m uvicorn api:app --host 127.0.0.1 --port 8765 --reload",
+    "build": "vite build",
+    "preview": "vite preview",
+    "data:build": "python \"scripts/build_poetry_database.py\"",
+    "data:verify": "python \"scripts/verify_poetry_database.py\"",
+    "data:export": "python \"scripts/export_web_data.py\"",
+    "build:data": "npm run data:build && npm run data:verify && npm run data:export",
+    "start": "powershell -ExecutionPolicy Bypass -File \"start.ps1\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "three": "^0.185.1",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/three": "^0.185.4",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.3"
+  }
+}

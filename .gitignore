@@ -1,0 +1,19 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+
+# Local database and source corpus are not needed by GitHub Pages.
+data/poetry.db
+data/poetry.db-*
+data/raw/
+data/quality-report.json
+
+# Keep the static browser dataset used by the public site.
+!data/web/
+!data/web/**
+
+.env
+.env.*
+!.env.example
+

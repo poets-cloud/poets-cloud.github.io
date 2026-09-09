@@ -1,0 +1,44 @@
+[
+  {
+    "id": "五绝",
+    "name": "五绝",
+    "count": 112,
+    "color": "#7dd3fc"
+  },
+  {
+    "id": "七绝",
+    "name": "七绝",
+    "count": 42,
+    "color": "#60a5fa"
+  },
+  {
+    "id": "五律",
+    "name": "五律",
+    "count": 65,
+    "color": "#a78bfa"
+  },
+  {
+    "id": "七律",
+    "name": "七律",
+    "count": 42,
+    "color": "#f472b6"
+  },
+  {
+    "id": "词",
+    "name": "词",
+    "count": 556,
+    "color": "#fbbf24"
+  },
+  {
+    "id": "曲",
+    "name": "曲",
+    "count": 300,
+    "color": "#fb923c"
+  },
+  {
+    "id": "其他",
+    "name": "其他",
+    "count": 39,
+    "color": "#94a3b8"
+  }
+]

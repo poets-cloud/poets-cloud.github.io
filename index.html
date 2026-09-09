@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>诗云 Demo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar floating-surface">
+        <div>
+          <p class="eyebrow">Poets Cloud Demo</p>
+          <h1>诗云</h1>
+          <p class="subtitle">在朝代、诗人与诗作之间漫游</p>
+        </div>
+        <div class="stats" id="stats"></div>
+      </header>
+
+      <section class="controls floating-window filters-collapsed" id="controlPanel">
+        <div class="window-bar">
+          <div class="window-title">
+            <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>宇宙探索器</span>
+          </div>
+          <button id="toggleFilters" class="window-action" type="button" aria-expanded="false">展开筛选</button>
+        </div>
+        <div class="search-row">
+          <input id="searchInput" type="search" placeholder="搜索标题、作者、正文或标签" />
+          <button id="resetView" type="button">重置</button>
+        </div>
+        <div class="filters" id="meterFilters"></div>
+      </section>
+
+      <main class="layout">
+        <section class="cloud">
+          <canvas id="cloudCanvas2d"></canvas>
+          <canvas id="cloudCanvas3d"></canvas>
+          <nav id="levelNav" class="level-nav" aria-label="诗词宇宙层级">
+            <button type="button" data-level="overview" class="active">诗词宇宙</button>
+            <span>›</span>
+            <button type="button" data-level="dynasty" disabled>选择朝代</button>
+            <span>›</span>
+            <button type="button" data-level="author" disabled>选择诗人</button>
+          </nav>
+          <div class="level-summary">
+            <strong id="levelTitle">朝代星系</strong>
+            <span id="levelDescription">选择一个朝代进入；诗人和诗作将在下一层出现</span>
+          </div>
+          <div id="cloudLabels" class="cloud-labels" aria-hidden="true"></div>
+          <div id="cloudTooltip" class="cloud-tooltip" role="status" aria-live="polite"></div>
+          <div class="cloud-legend" aria-label="星云层级图例">
+            <span><i class="legend-dot dynasty-dot"></i>朝代</span>
+            <span><i class="legend-dot author-dot"></i>诗人</span>
+            <span><i class="legend-dot poem-dot"></i>诗词</span>
+          </div>
+          <div class="cloud-hint">左键拖拽旋转 · 右键 / 中键 / Shift + 左键拖拽平移 · 滚轮缩放</div>
+          <div id="debugOverlay" class="debug-overlay">星系正在苏醒...</div>
+        </section>
+
+        <aside class="sidebar" aria-label="诗词信息浮窗">
+          <section class="floating-window list-panel">
+            <div class="window-bar compact">
+              <div class="window-title">
+                <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span>星图索引</span>
+              </div>
+            </div>
+            <div class="panel-head">
+              <h2>结果列表</h2>
+              <span id="resultCount"></span>
+            </div>
+            <div id="results" class="result-list"></div>
+          </section>
+
+          <section class="floating-window detail-panel" id="detailPanel">
+            <div class="window-bar compact">
+              <div class="window-title">
+                <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span>观测记录</span>
+              </div>
+            </div>
+            <div class="panel-head">
+              <h2>诗词详情</h2>
+              <button id="clearSelection">清空</button>
+            </div>
+            <div id="detailContent" class="detail-content">请选择一首诗查看内容。</div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
