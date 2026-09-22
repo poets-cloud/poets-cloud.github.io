@@ -72,22 +72,43 @@
             </div>
             <div id="results" class="result-list"></div>
           </section>
-
-          <section class="floating-window detail-panel" id="detailPanel">
-            <div class="window-bar compact">
-              <div class="window-title">
-                <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-                <span>观测记录</span>
-              </div>
-            </div>
-            <div class="panel-head">
-              <h2>诗词详情</h2>
-              <button id="clearSelection">清空</button>
-            </div>
-            <div id="detailContent" class="detail-content">请选择一首诗查看内容。</div>
-          </section>
         </aside>
       </main>
+
+      <section id="poemReader" class="poem-reader" role="dialog" aria-modal="true" aria-labelledby="readerTitle" aria-hidden="true">
+        <button class="poem-reader-backdrop" type="button" data-reader-close aria-label="关闭诗词阅读"></button>
+        <article class="poem-reader-card floating-window" tabindex="-1">
+          <header class="reader-window-bar">
+            <div class="window-title">
+              <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>诗作观测</span>
+            </div>
+            <div class="reader-window-actions">
+              <button id="locatePoem" class="reader-utility" type="button">在星图中定位</button>
+              <button id="toggleReadingMode" class="reader-utility" type="button" aria-pressed="false">展开阅读</button>
+              <button class="reader-close" type="button" data-reader-close aria-label="关闭">×</button>
+            </div>
+          </header>
+
+          <div class="reader-scroll">
+            <div class="reader-kicker" id="readerMeta"></div>
+            <h2 id="readerTitle" class="reader-title">诗词标题</h2>
+            <div id="readerAuthor" class="reader-author"></div>
+            <div id="readerBody" class="reader-body"></div>
+            <div id="readerTags" class="reader-tags"></div>
+          </div>
+
+          <footer class="reader-footer">
+            <button id="previousPoem" class="reader-nav" type="button" aria-label="上一首诗">
+              <span>←</span><small>上一首</small>
+            </button>
+            <div id="readerPosition" class="reader-position"></div>
+            <button id="nextPoem" class="reader-nav" type="button" aria-label="下一首诗">
+              <small>下一首</small><span>→</span>
+            </button>
+          </footer>
+        </article>
+      </section>
     </div>
 
     <script type="module" src="app.js"></script>

@@ -24,10 +24,8 @@ let searchCorpusPromise = null;
 const searchInput = document.getElementById('searchInput');
 const meterFilters = document.getElementById('meterFilters');
 const resultsEl = document.getElementById('results');
-const detailEl = document.getElementById('detailContent');
 const resultCountEl = document.getElementById('resultCount');
 const statsEl = document.getElementById('stats');
-const clearSelectionBtn = document.getElementById('clearSelection');
 const resetViewBtn = document.getElementById('resetView');
 const toggleFiltersBtn = document.getElementById('toggleFilters');
 const controlPanelEl = document.getElementById('controlPanel');
@@ -39,7 +37,20 @@ const cloudTooltipEl = document.getElementById('cloudTooltip');
 const levelNavEl = document.getElementById('levelNav');
 const levelTitleEl = document.getElementById('levelTitle');
 const levelDescriptionEl = document.getElementById('levelDescription');
+const poemReaderEl = document.getElementById('poemReader');
+const readerCardEl = poemReaderEl?.querySelector('.poem-reader-card');
+const readerMetaEl = document.getElementById('readerMeta');
+const readerTitleEl = document.getElementById('readerTitle');
+const readerAuthorEl = document.getElementById('readerAuthor');
+const readerBodyEl = document.getElementById('readerBody');
+const readerTagsEl = document.getElementById('readerTags');
+const readerPositionEl = document.getElementById('readerPosition');
+const previousPoemBtn = document.getElementById('previousPoem');
+const nextPoemBtn = document.getElementById('nextPoem');
+const locatePoemBtn = document.getElementById('locatePoem');
+const toggleReadingModeBtn = document.getElementById('toggleReadingMode');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let readerReturnFocus = null;
 
 const MAX_VISIBLE_AUTHORS = 48;
 const MAX_VISIBLE_POEMS = 28;
@@ -99,6 +110,14 @@ const state = {
 
 function setDebug(message) { if (debugOverlay) debugOverlay.textContent = message; }
 function normalizeText(text) { return (text || '').toLowerCase().replace(/\s+/g, ''); }
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
 function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 function hashString(text) {
   let h = 2166136261;
@@ -293,17 +312,71 @@ function applyFilters() {
 
 function renderResults() {
   resultCountEl.textContent = `${filteredPoems.length} 条`;
-  resultsEl.innerHTML = filteredPoems.slice(0, 120).map((poem) => `
-    <button class="result-item ${poem.id === selectedId ? 'selected' : ''}" data-id="${poem.id}">
-      <div class="result-title">${poem.title}</div>
-      <div class="result-meta">${poem.authorName} · ${poem.dynasty} · ${poem.meter}</div>
-      <div class="result-meta">${poem.excerpt || ''}</div>
+  resultsEl.innerHTML = filteredPoems.slice(0, 120).map((poem, index) => `
+    <button class="result-item ${poem.id === selectedId ? 'selected' : ''}" data-id="${escapeHtml(poem.id)}" aria-label="阅读《${escapeHtml(poem.title)}》">
+      <div class="result-item-head">
+        <div class="result-title">${escapeHtml(poem.title)}</div>
+        <span class="result-order">${String(index + 1).padStart(2, '0')}</span>
+      </div>
+      <div class="result-meta">${escapeHtml(poem.authorName)} · ${escapeHtml(poem.dynasty)} · ${escapeHtml(poem.meter)}</div>
+      <div class="result-excerpt">${escapeHtml(poem.excerpt || '点击阅读完整诗文')}</div>
     </button>
   `).join('');
   resultsEl.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => selectPoem(btn.dataset.id)));
+  resultsEl.querySelector('.result-item.selected')?.scrollIntoView({ block: 'nearest' });
+}
+
+function getReadingSequence(poem) {
+  const sameAuthor = (collection) => collection.filter((item) => item.authorName === poem.authorName && item.dynasty === poem.dynasty);
+  const filteredAuthorPoems = sameAuthor(filteredPoems);
+  return filteredAuthorPoems.length ? filteredAuthorPoems : sameAuthor(poems);
+}
+
+function renderPoemReader(poem) {
+  if (!poemReaderEl) return;
+  const sequence = getReadingSequence(poem);
+  const position = Math.max(0, sequence.findIndex((item) => item.id === poem.id));
+  const tags = poem.tags?.filter(Boolean) || [];
+  const lines = poem.lines?.length ? poem.lines : [poem.excerpt || '诗文暂未载入'];
+
+  readerMetaEl.textContent = `${poem.dynasty || '未知朝代'} · ${poem.meter || '诗作'}`;
+  readerTitleEl.textContent = poem.title || '无题';
+  readerAuthorEl.textContent = poem.authorName || '佚名';
+  readerBodyEl.innerHTML = lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('');
+  readerTagsEl.innerHTML = tags.length
+    ? tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')
+    : '<span class="reader-tag-muted">暂无标签</span>';
+  readerPositionEl.innerHTML = `<strong>${position + 1}</strong><span>/</span><span>${sequence.length}</span><small>${escapeHtml(poem.authorName)}的诗作</small>`;
+
+  previousPoemBtn.disabled = sequence.length < 2;
+  nextPoemBtn.disabled = sequence.length < 2;
+  previousPoemBtn.dataset.targetId = sequence[(position - 1 + sequence.length) % sequence.length]?.id || '';
+  nextPoemBtn.dataset.targetId = sequence[(position + 1) % sequence.length]?.id || '';
+
+  if (!poemReaderEl.classList.contains('is-open')) readerReturnFocus = document.activeElement;
+  poemReaderEl.classList.add('is-open');
+  poemReaderEl.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('reader-open');
+  requestAnimationFrame(() => readerCardEl?.focus({ preventScroll: true }));
+}
+
+function closePoemReader() {
+  if (!poemReaderEl?.classList.contains('is-open')) return;
+  poemReaderEl.classList.remove('is-open');
+  poemReaderEl.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('reader-open', 'reader-immersive');
+  toggleReadingModeBtn.textContent = '展开阅读';
+  toggleReadingModeBtn.setAttribute('aria-pressed', 'false');
+  if (readerReturnFocus instanceof HTMLElement) readerReturnFocus.focus({ preventScroll: true });
+}
+
+function navigateReader(button) {
+  const targetId = button?.dataset.targetId;
+  if (targetId) selectPoem(targetId);
 }
 
 async function selectPoem(id) {
+  const requestedId = id;
   selectedId = id;
   let poem = poems.find((item) => item.id === id);
   try {
@@ -326,21 +399,9 @@ async function selectPoem(id) {
   } catch (error) {
     setDebug(`详情加载失败：${error.message}`);
   }
-  if (!poem) return;
-  detailEl.innerHTML = `
-    <h3 class="poem-title">${poem.title}</h3>
-    <div class="poem-meta">${poem.authorName} · ${poem.dynasty} · ${poem.meter}</div>
-    <div class="poem-body">${(poem.lines || []).join('<br/>')}</div>
-    <div class="poem-meta" style="margin-top:14px;">标签：${poem.tags && poem.tags.length ? poem.tags.join(' / ') : '无'}</div>
-  `;
+  if (!poem || selectedId !== requestedId) return;
+  renderPoemReader(poem);
   focusOnPoem(poem);
-  renderResults();
-  render3D();
-}
-
-function clearSelection() {
-  selectedId = null;
-  detailEl.textContent = '请选择一首诗查看内容。';
   renderResults();
   render3D();
 }
@@ -354,10 +415,10 @@ function resetView() {
   activeAuthor = '全部';
   selectedId = null;
   searchInput.value = '';
+  closePoemReader();
   setOverviewMode();
   renderFilters();
   applyFilters();
-  detailEl.textContent = '请选择一首诗查看内容。';
 }
 
 function computeHierarchy() {
@@ -1219,8 +1280,21 @@ searchInput.addEventListener('input', async (event) => {
     setDebug(`搜索失败：${error.message}`);
   }
 });
-clearSelectionBtn.addEventListener('click', clearSelection);
 resetViewBtn.addEventListener('click', resetView);
+poemReaderEl?.querySelectorAll('[data-reader-close]').forEach((button) => button.addEventListener('click', closePoemReader));
+previousPoemBtn?.addEventListener('click', () => navigateReader(previousPoemBtn));
+nextPoemBtn?.addEventListener('click', () => navigateReader(nextPoemBtn));
+locatePoemBtn?.addEventListener('click', () => {
+  const poem = poems.find((item) => item.id === selectedId);
+  if (!poem) return;
+  focusOnPoem(poem);
+  closePoemReader();
+});
+toggleReadingModeBtn?.addEventListener('click', () => {
+  const immersive = document.body.classList.toggle('reader-immersive');
+  toggleReadingModeBtn.textContent = immersive ? '退出全屏' : '展开阅读';
+  toggleReadingModeBtn.setAttribute('aria-pressed', String(immersive));
+});
 if (toggleFiltersBtn && controlPanelEl) {
   toggleFiltersBtn.addEventListener('click', () => {
     const collapsed = controlPanelEl.classList.toggle('filters-collapsed');
@@ -1240,7 +1314,13 @@ canvas3d.addEventListener('pointermove', (event) => {
       state.hoveredPoemId = hit.poem.id;
       canvas3d.style.cursor = 'pointer';
       if (cloudTooltipEl) {
-        cloudTooltipEl.innerHTML = `<div class="tooltip-title">${hit.poem.title}</div><div class="tooltip-meta">${hit.poem.authorName} · ${hit.poem.meter}</div>`;
+        cloudTooltipEl.innerHTML = `
+          <div class="tooltip-eyebrow">诗作预览</div>
+          <div class="tooltip-title">${escapeHtml(hit.poem.title)}</div>
+          <div class="tooltip-meta">${escapeHtml(hit.poem.authorName)} · ${escapeHtml(hit.poem.meter)}</div>
+          <div class="tooltip-excerpt">${escapeHtml(hit.poem.excerpt || '点击阅读全文')}</div>
+          <div class="tooltip-hint">单击打开阅读卡</div>
+        `;
         cloudTooltipEl.classList.add('visible');
       }
     } else if (hit.type === 'author') {
@@ -1334,6 +1414,13 @@ window.addEventListener('wheel', (event) => {
   updateCameraFromOrbit();
 }, { passive: false });
 window.addEventListener('keydown', (event) => {
+  if (poemReaderEl?.classList.contains('is-open')) {
+    if (event.key === 'Escape') closePoemReader();
+    if (event.key === 'ArrowLeft') navigateReader(previousPoemBtn);
+    if (event.key === 'ArrowRight') navigateReader(nextPoemBtn);
+    if (['Escape', 'ArrowLeft', 'ArrowRight'].includes(event.key)) event.preventDefault();
+    return;
+  }
   if (!state.renderer) return;
   const step = 0.06;
   if (event.key === 'ArrowLeft') state.orbit.theta -= step;
