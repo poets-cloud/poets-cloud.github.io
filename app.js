@@ -35,6 +35,7 @@ const debugOverlay = document.getElementById('debugOverlay');
 const cloudLabelsEl = document.getElementById('cloudLabels');
 const cloudTooltipEl = document.getElementById('cloudTooltip');
 const levelNavEl = document.getElementById('levelNav');
+const levelBackBtn = document.getElementById('levelBack');
 const levelTitleEl = document.getElementById('levelTitle');
 const levelDescriptionEl = document.getElementById('levelDescription');
 const sidebarEl = document.querySelector('.sidebar');
@@ -56,6 +57,8 @@ const toggleReadingModeBtn = document.getElementById('toggleReadingMode');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const mobileLayout = window.matchMedia('(max-width: 1039px)');
 let readerReturnFocus = null;
+let restoringViewHistory = false;
+let pendingViewHistory = null;
 
 const MAX_VISIBLE_AUTHORS = 48;
 const MAX_VISIBLE_POEMS = 28;
@@ -71,7 +74,19 @@ const state = {
   raycaster: null,
   pointer: new THREE.Vector2(),
   frame: 0,
-  drag: { active: false, moved: false, suppressClick: false, mode: 'rotate', x: 0, y: 0 },
+  drag: {
+    active: false,
+    moved: false,
+    suppressClick: false,
+    mode: 'rotate',
+    x: 0,
+    y: 0,
+    startX: 0,
+    startY: 0,
+    pointers: new Map(),
+    pinchDistance: 0,
+    pinchMidpoint: { x: 0, y: 0 },
+  },
   orbit: { radius: 820, theta: 0.25, phi: 0.66 },
   viewMode: 'overview',
   focusedDynasty: null,
@@ -141,7 +156,12 @@ function colorFromHue(hue, saturation = 72, lightness = 60) {
 }
 
 function stabilizeOrbit() {
-  state.orbit.radius = clamp(state.orbit.radius, 320, 1400);
+  const radiusLimits = {
+    overview: [360, 1800],
+    dynasty: [200, 1200],
+    author: [120, 850],
+  }[state.viewMode] || [320, 1400];
+  state.orbit.radius = clamp(state.orbit.radius, radiusLimits[0], radiusLimits[1]);
   state.orbit.phi = clamp(state.orbit.phi, 0.34, 1.18);
   const limit = Math.PI * 2;
   if (state.orbit.theta > limit || state.orbit.theta < -limit) {
@@ -163,9 +183,9 @@ function setOverviewMode() {
   state.viewMode = 'overview';
   state.focusedDynasty = null;
   state.trackedAuthorKey = null;
-  state.orbit.radius = 900;
-  state.orbit.theta = 0.08;
-  state.orbit.phi = 1.05;
+  state.orbit.radius = mobileLayout.matches ? 1050 : 900;
+  state.orbit.theta = mobileLayout.matches ? 0.04 : 0.08;
+  state.orbit.phi = mobileLayout.matches ? 1 : 1.05;
   state.orbitTarget.set(0, 0, 0);
   state.cameraLookTarget.set(0, 0, 0);
   stabilizeOrbit();
@@ -212,6 +232,7 @@ function renderLevelNavigation() {
   const authorButton = levelNavEl.querySelector('[data-level="author"]');
   const overviewButton = levelNavEl.querySelector('[data-level="overview"]');
   const authorGroup = state.trackedAuthorKey ? state.authorGroups.get(state.trackedAuthorKey) : null;
+  if (levelBackBtn) levelBackBtn.disabled = state.viewMode === 'overview';
   overviewButton.classList.toggle('active', state.viewMode === 'overview');
   dynastyButton.disabled = !state.focusedDynasty;
   dynastyButton.textContent = state.focusedDynasty || '选择朝代';
@@ -280,13 +301,18 @@ function renderFilters() {
         activeAuthor = value;
         if (value === '全部') {
           if (activeDynasty !== '全部') setDynastyMode(activeDynasty);
+          else setOverviewMode();
         } else {
           const authorGroup = state.authorMarkers.find((item) => item.authorName === value && (activeDynasty === '全部' || item.dynasty === activeDynasty));
-          if (authorGroup) setFocusMode(authorGroup);
+          if (authorGroup) {
+            activeDynasty = authorGroup.dynasty;
+            setFocusMode(authorGroup);
+          }
         }
       }
       renderFilters();
       applyFilters();
+      if (type === 'dynasty' || type === 'author') syncDirectoryHistory('push');
     });
   });
 }
@@ -347,6 +373,76 @@ function setMobileIndexOpen(open) {
   }
 }
 
+function historySignature(entry) {
+  if (!entry?.poetsCloud) return '';
+  return [entry.level, entry.dynasty || '', entry.author || '', entry.poemId || ''].join('|');
+}
+
+function getDirectoryHistoryState() {
+  const authorGroup = state.trackedAuthorKey ? state.authorGroups.get(state.trackedAuthorKey) : null;
+  if (state.viewMode === 'author' && authorGroup) {
+    return { poetsCloud: true, level: 'author', dynasty: authorGroup.dynasty, author: authorGroup.authorName };
+  }
+  if (state.viewMode === 'dynasty' && state.focusedDynasty) {
+    return { poetsCloud: true, level: 'dynasty', dynasty: state.focusedDynasty };
+  }
+  return { poetsCloud: true, level: 'overview' };
+}
+
+function writeViewHistory(entry, mode = 'push') {
+  if (restoringViewHistory || !entry) return;
+  const currentSignature = historySignature(window.history.state);
+  const nextSignature = historySignature(entry);
+  if (mode === 'push' && currentSignature === nextSignature) return;
+  window.history[mode === 'replace' ? 'replaceState' : 'pushState'](entry, '', window.location.href);
+}
+
+function syncDirectoryHistory(mode = 'push') {
+  writeViewHistory(getDirectoryHistoryState(), mode);
+}
+
+async function restoreViewHistory(entry) {
+  if (!entry?.poetsCloud) return;
+  if (!poems.length || !state.renderer) {
+    pendingViewHistory = entry;
+    return;
+  }
+  restoringViewHistory = true;
+  setMobileIndexOpen(false);
+  try {
+    if (entry.level === 'reader' && entry.poemId) {
+      await selectPoem(entry.poemId, { historyMode: 'none', ensureDirectory: false });
+      return;
+    }
+    closePoemReader();
+    selectedId = null;
+    if (entry.level === 'author' && entry.dynasty && entry.author) {
+      const authorGroup = state.authorGroups.get(`${entry.dynasty}:${entry.author}`);
+      if (authorGroup) {
+        activeDynasty = entry.dynasty;
+        activeAuthor = entry.author;
+        setFocusMode(authorGroup);
+      } else {
+        activeDynasty = entry.dynasty;
+        activeAuthor = '全部';
+        setDynastyMode(entry.dynasty);
+      }
+    } else if (entry.level === 'dynasty' && entry.dynasty) {
+      activeDynasty = entry.dynasty;
+      activeAuthor = '全部';
+      setDynastyMode(entry.dynasty);
+    } else {
+      activeDynasty = '全部';
+      activeAuthor = '全部';
+      setOverviewMode();
+    }
+    renderFilters();
+    applyFilters();
+  } finally {
+    restoringViewHistory = false;
+  }
+}
+
 function getReadingSequence(poem) {
   const sameAuthor = (collection) => collection.filter((item) => item.authorName === poem.authorName && item.dynasty === poem.dynasty);
   const filteredAuthorPoems = sameAuthor(filteredPoems);
@@ -391,12 +487,21 @@ function closePoemReader() {
   if (readerReturnFocus instanceof HTMLElement) readerReturnFocus.focus({ preventScroll: true });
 }
 
-function navigateReader(button) {
-  const targetId = button?.dataset.targetId;
-  if (targetId) selectPoem(targetId);
+function requestClosePoemReader() {
+  if (window.history.state?.poetsCloud && window.history.state.level === 'reader') {
+    window.history.back();
+    return;
+  }
+  closePoemReader();
+  syncDirectoryHistory('replace');
 }
 
-async function selectPoem(id) {
+function navigateReader(button) {
+  const targetId = button?.dataset.targetId;
+  if (targetId) selectPoem(targetId, { historyMode: 'replace', ensureDirectory: false });
+}
+
+async function selectPoem(id, { historyMode = 'push', ensureDirectory = true } = {}) {
   const requestedId = id;
   selectedId = id;
   setMobileIndexOpen(false);
@@ -422,8 +527,18 @@ async function selectPoem(id) {
     setDebug(`详情加载失败：${error.message}`);
   }
   if (!poem || selectedId !== requestedId) return;
-  renderPoemReader(poem);
   focusOnPoem(poem);
+  if (historyMode === 'push' && ensureDirectory) syncDirectoryHistory('push');
+  renderPoemReader(poem);
+  if (historyMode !== 'none') {
+    writeViewHistory({
+      poetsCloud: true,
+      level: 'reader',
+      dynasty: poem.dynasty,
+      author: poem.authorName,
+      poemId: poem.id,
+    }, historyMode);
+  }
   renderResults();
   render3D();
 }
@@ -442,6 +557,7 @@ function resetView() {
   setOverviewMode();
   renderFilters();
   applyFilters();
+  syncDirectoryHistory('push');
 }
 
 function computeHierarchy() {
@@ -460,12 +576,19 @@ function computeHierarchy() {
 
   dynastyNames.forEach((dynasty, dIndex) => {
     const dAngle = dIndex * dynastyAngleStep;
-    const overviewGrid = [
-      [-255, 105, 30],
-      [245, 92, -35],
-      [-220, -125, 20],
-      [225, -138, -10],
-    ];
+    const overviewGrid = mobileLayout.matches
+      ? [
+        [-135, 145, 20],
+        [125, 62, -25],
+        [-120, -72, 16],
+        [115, -158, -12],
+      ]
+      : [
+        [-255, 105, 30],
+        [245, 92, -35],
+        [-220, -125, 20],
+        [225, -138, -10],
+      ];
     const gridPosition = dynastyNames.length <= 4 ? overviewGrid[dIndex] : null;
     const dCenter = gridPosition
       ? new THREE.Vector3(...gridPosition)
@@ -1270,6 +1393,10 @@ async function loadData() {
       resize();
       setOverviewMode();
       animate3D();
+      const requestedView = pendingViewHistory || (window.history.state?.poetsCloud ? window.history.state : null);
+      pendingViewHistory = null;
+      if (requestedView) await restoreViewHistory(requestedView);
+      else syncDirectoryHistory('replace');
     }
     window.__POETS_DEBUG__ = { poems, authors, dynasties, mode: 'static-github-pages' };
   } catch (error) {
@@ -1312,14 +1439,14 @@ mobileLayout.addEventListener('change', (event) => {
   setMobileIndexOpen(false);
 });
 setMobileIndexOpen(false);
-poemReaderEl?.querySelectorAll('[data-reader-close]').forEach((button) => button.addEventListener('click', closePoemReader));
+poemReaderEl?.querySelectorAll('[data-reader-close]').forEach((button) => button.addEventListener('click', requestClosePoemReader));
 previousPoemBtn?.addEventListener('click', () => navigateReader(previousPoemBtn));
 nextPoemBtn?.addEventListener('click', () => navigateReader(nextPoemBtn));
 locatePoemBtn?.addEventListener('click', () => {
   const poem = poems.find((item) => item.id === selectedId);
   if (!poem) return;
   focusOnPoem(poem);
-  closePoemReader();
+  requestClosePoemReader();
 });
 toggleReadingModeBtn?.addEventListener('click', () => {
   const immersive = document.body.classList.toggle('reader-immersive');
@@ -1393,34 +1520,78 @@ canvas3d.addEventListener('pointerleave', () => {
 });
 canvas3d.addEventListener('contextmenu', (event) => event.preventDefault());
 canvas3d.addEventListener('auxclick', (event) => event.preventDefault());
+
+function panCamera(dx, dy) {
+  const distance = state.camera.position.distanceTo(state.orbitTarget);
+  const worldPerPixel = (2 * distance * Math.tan(THREE.MathUtils.degToRad(state.camera.fov * 0.5))) / Math.max(1, state.height);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(state.camera.quaternion);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(state.camera.quaternion);
+  const offset = right.multiplyScalar(-dx * worldPerPixel).add(up.multiplyScalar(dy * worldPerPixel));
+  state.orbitTarget.add(offset);
+  state.cameraLookTarget.add(offset);
+}
+
+function getTouchPair() {
+  return [...state.drag.pointers.values()].slice(0, 2);
+}
+
+function beginPinchGesture() {
+  const [first, second] = getTouchPair();
+  if (!first || !second) return;
+  state.drag.mode = 'pinch';
+  state.drag.pinchDistance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+  state.drag.pinchMidpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+}
+
 canvas3d.addEventListener('pointerdown', (event) => {
   event.preventDefault();
+  if (event.pointerType === 'touch') {
+    state.drag.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
   state.drag.active = true;
-  state.drag.moved = false;
-  state.drag.suppressClick = false;
-  state.drag.mode = (event.buttons & 6) !== 0 || event.shiftKey ? 'pan' : 'rotate';
+  if (state.drag.pointers.size <= 1) {
+    state.drag.moved = false;
+    state.drag.suppressClick = false;
+  }
+  state.drag.mode = event.pointerType === 'touch' || (event.buttons & 6) !== 0 || event.shiftKey ? 'pan' : 'rotate';
   state.drag.x = event.clientX;
   state.drag.y = event.clientY;
+  state.drag.startX = event.clientX;
+  state.drag.startY = event.clientY;
+  if (state.drag.pointers.size >= 2) beginPinchGesture();
   canvas3d.style.cursor = state.drag.mode === 'pan' ? 'move' : 'grabbing';
   canvas3d.setPointerCapture(event.pointerId);
 });
 canvas3d.addEventListener('pointermove', (event) => {
   if (!state.drag.active || !state.renderer) return;
   event.preventDefault();
+  if (event.pointerType === 'touch' && state.drag.pointers.has(event.pointerId)) {
+    state.drag.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (state.drag.pointers.size >= 2) {
+      const [first, second] = getTouchPair();
+      const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
+      const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+      if (Math.abs(distance - state.drag.pinchDistance) >= 1 || Math.hypot(midpoint.x - state.drag.pinchMidpoint.x, midpoint.y - state.drag.pinchMidpoint.y) >= 2) {
+        state.drag.moved = true;
+        state.drag.suppressClick = true;
+      }
+      if (state.drag.pinchDistance > 0) state.orbit.radius *= state.drag.pinchDistance / distance;
+      panCamera(midpoint.x - state.drag.pinchMidpoint.x, midpoint.y - state.drag.pinchMidpoint.y);
+      state.drag.pinchDistance = distance;
+      state.drag.pinchMidpoint = midpoint;
+      stabilizeOrbit();
+      updateCameraFromOrbit();
+      return;
+    }
+  }
   const dx = event.clientX - state.drag.x;
   const dy = event.clientY - state.drag.y;
-  if (Math.hypot(dx, dy) >= 3) state.drag.moved = true;
+  if (Math.hypot(event.clientX - state.drag.startX, event.clientY - state.drag.startY) >= 4) state.drag.moved = true;
   state.drag.x = event.clientX;
   state.drag.y = event.clientY;
   if (!state.drag.moved) return;
   if (state.drag.mode === 'pan') {
-    const distance = state.camera.position.distanceTo(state.orbitTarget);
-    const worldPerPixel = (2 * distance * Math.tan(THREE.MathUtils.degToRad(state.camera.fov * 0.5))) / Math.max(1, state.height);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(state.camera.quaternion);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(state.camera.quaternion);
-    const offset = right.multiplyScalar(-dx * worldPerPixel).add(up.multiplyScalar(dy * worldPerPixel));
-    state.orbitTarget.add(offset);
-    state.cameraLookTarget.add(offset);
+    panCamera(dx, dy);
   } else {
     state.orbit.theta -= dx * 0.0032;
     state.orbit.phi += dy * 0.0032;
@@ -1430,9 +1601,27 @@ canvas3d.addEventListener('pointermove', (event) => {
 });
 function finishCameraDrag(event) {
   if (!state.drag.active) return;
+  if (event?.pointerType === 'touch') {
+    state.drag.pointers.delete(event.pointerId);
+    if (canvas3d.hasPointerCapture(event.pointerId)) canvas3d.releasePointerCapture(event.pointerId);
+    if (state.drag.pointers.size >= 2) {
+      beginPinchGesture();
+      return;
+    }
+    if (state.drag.pointers.size === 1) {
+      const remaining = state.drag.pointers.values().next().value;
+      state.drag.mode = 'pan';
+      state.drag.x = remaining.x;
+      state.drag.y = remaining.y;
+      state.drag.startX = remaining.x;
+      state.drag.startY = remaining.y;
+      return;
+    }
+  }
   state.drag.active = false;
-  state.drag.suppressClick = state.drag.moved;
+  state.drag.suppressClick = state.drag.suppressClick || state.drag.moved;
   if (event && canvas3d.hasPointerCapture(event.pointerId)) canvas3d.releasePointerCapture(event.pointerId);
+  state.drag.pinchDistance = 0;
   canvas3d.style.cursor = 'grab';
 }
 canvas3d.addEventListener('pointerup', finishCameraDrag);
@@ -1446,7 +1635,7 @@ window.addEventListener('wheel', (event) => {
 }, { passive: false });
 window.addEventListener('keydown', (event) => {
   if (poemReaderEl?.classList.contains('is-open')) {
-    if (event.key === 'Escape') closePoemReader();
+    if (event.key === 'Escape') requestClosePoemReader();
     if (event.key === 'ArrowLeft') navigateReader(previousPoemBtn);
     if (event.key === 'ArrowRight') navigateReader(nextPoemBtn);
     if (['Escape', 'ArrowLeft', 'ArrowRight'].includes(event.key)) event.preventDefault();
@@ -1486,6 +1675,7 @@ window.addEventListener('click', async (event) => {
       setFocusMode(authorGroup);
       renderFilters();
       applyFilters();
+      syncDirectoryHistory('push');
     }
   } else if (hit && hit.type === 'dynasty') {
     activeDynasty = hit.dynasty;
@@ -1493,7 +1683,28 @@ window.addEventListener('click', async (event) => {
     setDynastyMode(hit.dynasty);
     renderFilters();
     applyFilters();
+    syncDirectoryHistory('push');
   }
+});
+
+levelBackBtn?.addEventListener('click', () => {
+  const currentEntry = window.history.state;
+  if (currentEntry?.poetsCloud && currentEntry.level !== 'overview') {
+    window.history.back();
+    return;
+  }
+  if (state.viewMode === 'author' && state.focusedDynasty) {
+    activeDynasty = state.focusedDynasty;
+    activeAuthor = '全部';
+    setDynastyMode(state.focusedDynasty);
+  } else {
+    activeDynasty = '全部';
+    activeAuthor = '全部';
+    setOverviewMode();
+  }
+  renderFilters();
+  applyFilters();
+  syncDirectoryHistory('replace');
 });
 
 if (levelNavEl) {
@@ -1511,8 +1722,13 @@ if (levelNavEl) {
     }
     renderFilters();
     applyFilters();
+    syncDirectoryHistory('push');
   });
 }
+
+window.addEventListener('popstate', (event) => {
+  if (event.state?.poetsCloud) restoreViewHistory(event.state);
+});
 
 resize();
 loadData();

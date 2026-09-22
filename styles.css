@@ -308,6 +308,7 @@ h1 {
 .level-nav button.active { background: rgba(125, 211, 252, 0.11); color: var(--text); }
 .level-nav button:disabled { opacity: 0.38; cursor: default; }
 .level-nav span { color: rgba(148, 163, 184, 0.42); font-size: 11px; }
+.level-nav .level-back { min-width: 32px; padding-right: 8px; padding-left: 8px; font-size: 15px; }
 
 .level-summary {
   position: absolute;
@@ -349,6 +350,7 @@ h1 {
 .tooltip-excerpt { margin-top: 8px; color: #e2e8f0; font-family: "Songti SC", "STSong", serif; font-size: 13px; line-height: 1.6; }
 .tooltip-hint { margin-top: 7px; color: #74839a; font-size: 10px; }
 .cloud-hint { position: absolute; z-index: 4; left: 24px; bottom: 24px; color: #78879d; font-size: 11px; }
+.mobile-gesture-hint { display: none; }
 
 .cloud-legend {
   position: absolute;
@@ -737,8 +739,26 @@ body.reader-immersive .reader-scroll { padding-right: 100px; padding-left: 100px
   }
 
   .debug-overlay,
-  .cloud-hint,
   .cloud-legend { display: none; }
+
+  .cloud-hint {
+    position: fixed;
+    top: calc(max(10px, env(safe-area-inset-top)) + 122px);
+    bottom: auto;
+    left: 50%;
+    display: block;
+    padding: 6px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    border-radius: 999px;
+    opacity: 0;
+    transform: translateX(-50%);
+    background: rgba(5, 10, 25, 0.58);
+    backdrop-filter: blur(10px);
+    white-space: nowrap;
+    animation: mobile-gesture-hint 4.8s ease both;
+  }
+  .desktop-gesture-hint { display: none; }
+  .mobile-gesture-hint { display: inline; }
 
   .level-nav {
     position: fixed;
@@ -784,9 +804,16 @@ body.reader-immersive .reader-scroll { padding-right: 100px; padding-left: 100px
 
 @media (max-height: 680px) and (max-width: 1039px) {
   .level-summary { display: none; }
+  .cloud-hint { display: none; }
   .sidebar { height: min(58dvh, 390px); }
   .reader-scroll { padding-top: 28px; padding-bottom: 22px; }
   .reader-body { margin-top: 26px; margin-bottom: 24px; }
+}
+
+@keyframes mobile-gesture-hint {
+  0%, 12% { opacity: 0; transform: translate(-50%, -4px); }
+  22%, 74% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
