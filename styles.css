@@ -55,6 +55,7 @@ input:focus-visible {
   padding: 18px 20px 16px;
   border-radius: 22px;
   pointer-events: none;
+  animation: ui-arrive-left 720ms cubic-bezier(.2,.75,.25,1) both;
 }
 
 .eyebrow {
@@ -94,6 +95,7 @@ h1 {
   padding: 11px;
   border-radius: 22px;
   transform: translateX(-50%);
+  animation: ui-arrive-top 760ms 90ms cubic-bezier(.2,.75,.25,1) both;
 }
 
 .window-bar {
@@ -287,6 +289,7 @@ h1 {
   background: rgba(6, 11, 27, 0.65);
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.25);
   backdrop-filter: blur(14px);
+  animation: ui-arrive-bottom 720ms 180ms cubic-bezier(.2,.75,.25,1) both;
 }
 
 .level-nav button {
@@ -314,6 +317,7 @@ h1 {
   max-width: 330px;
   pointer-events: none;
   text-shadow: 0 2px 14px #02040d;
+  animation: ui-arrive-left 720ms 140ms cubic-bezier(.2,.75,.25,1) both;
 }
 
 .level-summary strong { font-family: "Songti SC", "STSong", "Microsoft YaHei", serif; font-size: 19px; font-weight: 500; }
@@ -389,6 +393,27 @@ h1 {
   gap: 12px;
   width: var(--sidebar-width);
   min-height: 0;
+  animation: ui-arrive-right 760ms 120ms cubic-bezier(.2,.75,.25,1) both;
+}
+
+@keyframes ui-arrive-left {
+  from { opacity: 0; transform: translate3d(-18px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes ui-arrive-right {
+  from { opacity: 0; transform: translate3d(18px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes ui-arrive-top {
+  from { opacity: 0; transform: translate3d(-50%, -16px, 0); }
+  to { opacity: 1; transform: translate3d(-50%, 0, 0); }
+}
+
+@keyframes ui-arrive-bottom {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
 .list-panel,
@@ -449,6 +474,7 @@ h1 {
     inset: auto;
     width: 100%;
     transform: none;
+    animation: none;
   }
 
   .topbar { margin-bottom: 10px; }
@@ -474,6 +500,11 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cloud::before { animation: none; }
+  .cloud::before,
+  .topbar,
+  .controls,
+  .sidebar,
+  .level-nav,
+  .level-summary { animation: none; }
   .cloud-label, .cloud-tooltip, .filters { transition: none; }
 }

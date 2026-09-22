@@ -43,6 +43,7 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const MAX_VISIBLE_AUTHORS = 48;
 const MAX_VISIBLE_POEMS = 28;
+const OVERVIEW_PREVIEW_AUTHORS = 12;
 
 const state = {
   width: 0,
@@ -88,6 +89,7 @@ const state = {
   hoveredId: null,
   hoveredPoemId: null,
   hoveredAuthorKey: null,
+  hoveredDynasty: null,
   pointerClient: { x: 0, y: 0 },
   visibleIds: new Set(),
   visibleAuthorKeys: new Set(),
@@ -406,6 +408,8 @@ function computeHierarchy() {
   for (const [dynasty, dynastyPoems] of byDynasty.entries()) {
     const authorsInDynasty = [...new Set(dynastyPoems.map((p) => p.authorName))];
     const dynastyInfo = state.dynastyGroups.get(dynasty);
+    dynastyInfo.poemCount = dynastyPoems.length;
+    dynastyInfo.authorCount = authorsInDynasty.length;
     const authorRing = Math.min(230, Math.max(115, authorsInDynasty.length * 14));
     authorsInDynasty.forEach((authorName, aIndex) => {
       const aAngle = (aIndex / Math.max(1, authorsInDynasty.length)) * Math.PI * 2;
@@ -468,6 +472,10 @@ function computeHierarchy() {
       author.rank = rank;
       const angle = rank * 2.399963229728653;
       const radius = rank === 0 ? 42 : 58 + Math.sqrt(rank) * 31;
+      author.previewAngle = angle;
+      author.previewRadius = rank === 0 ? 44 : 62 + Math.sqrt(rank) * 18;
+      author.previewTilt = THREE.MathUtils.degToRad(-20 + (hashString(`${author.dynasty}:${author.authorName}:preview`) % 41));
+      author.previewSpeed = (0.000025 + (rank % 7) * 0.0000028) * (rank % 3 === 0 ? -1 : 1);
       author.center.set(
         dynastyInfo.center.x + Math.cos(angle) * radius,
         dynastyInfo.center.y + Math.sin(angle * 1.7) * 34,
@@ -485,6 +493,11 @@ function computeHierarchy() {
         }
       });
     });
+  });
+
+  const largestDynasty = Math.max(1, ...state.dynastyMarkers.map((item) => item.poemCount || 0));
+  state.dynastyMarkers.forEach((item) => {
+    item.visualScale = 0.9 + Math.sqrt((item.poemCount || 0) / largestDynasty) * 0.46;
   });
 }
 
@@ -538,9 +551,9 @@ function createDynastyDust() {
     for (let index = 0; index < pointCount; index += 1) {
       const angle = random() * Math.PI * 2;
       const radius = 54 + Math.pow(random(), 0.72) * 178;
-      positions[index * 3] = dynastyInfo.center.x + Math.cos(angle) * radius;
-      positions[index * 3 + 1] = dynastyInfo.center.y + (random() - 0.5) * 58 + Math.sin(angle * 2) * 8;
-      positions[index * 3 + 2] = dynastyInfo.center.z + Math.sin(angle) * radius * 0.68;
+      positions[index * 3] = Math.cos(angle) * radius;
+      positions[index * 3 + 1] = (random() - 0.5) * 58 + Math.sin(angle * 2) * 8;
+      positions[index * 3 + 2] = Math.sin(angle) * radius * 0.68;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -553,7 +566,12 @@ function createDynastyDust() {
       sizeAttenuation: true,
     });
     const cloud = new THREE.Points(geometry, material);
-    cloud.userData = { type: 'ambient-dust', dynasty: dynastyInfo.dynasty };
+    cloud.position.copy(dynastyInfo.center);
+    cloud.userData = {
+      type: 'ambient-dust', dynasty: dynastyInfo.dynasty,
+      phase: (hashString(`dust-phase:${dynastyInfo.dynasty}`) % 628) / 100,
+      speed: 0.000018 + (hashString(`dust-speed:${dynastyInfo.dynasty}`) % 17) * 0.0000012,
+    };
     state.nodeGroup.add(cloud);
     state.dynastyDust.set(dynastyInfo.dynasty, cloud);
   });
@@ -730,7 +748,7 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
   const labels = [];
   if (state.viewMode === 'overview') {
     state.dynastyMarkers.forEach((item) => labels.push({
-      text: item.dynasty, position: item.mesh.position, kind: 'dynasty', active: false,
+      text: `${item.dynasty} · ${item.authorCount || 0} 位诗人`, position: item.mesh.position, kind: 'dynasty', active: item.dynasty === state.hoveredDynasty,
     }));
   } else if (state.viewMode === 'dynasty') {
     state.authorMarkers
@@ -763,35 +781,55 @@ function updateOrbitalMotion(now, selectedAuthorKey) {
   const motion = reducedMotion.matches ? 0 : 1;
   const frameDelta = Math.min(50, Math.max(0, now - state.lastMotionAt));
   state.lastMotionAt = now;
-  if (largeDatasetMode) return;
   state.dynastyMarkers.forEach((dynasty) => {
-    if (dynasty.currentOrbitAngle === undefined) dynasty.currentOrbitAngle = dynasty.orbitPhase;
-    dynasty.currentOrbitAngle += frameDelta * dynasty.orbitSpeed * motion;
-    const angle = dynasty.currentOrbitAngle;
-    const z = Math.sin(angle) * dynasty.orbitRadiusZ;
-    dynasty.center.set(
-      Math.cos(angle) * dynasty.orbitRadiusX,
-      Math.sin(dynasty.orbitTilt) * z + Math.sin(angle * 2 + dynasty.phase) * 12,
-      Math.cos(dynasty.orbitTilt) * z,
-    );
+    if (state.viewMode === 'overview') {
+      const phase = now * dynasty.orbitSpeed + dynasty.phase;
+      dynasty.center.set(
+        dynasty.baseCenter.x + Math.cos(phase) * 9 * motion,
+        dynasty.baseCenter.y + Math.sin(phase * 1.7) * 7 * motion,
+        dynasty.baseCenter.z + Math.sin(phase) * 12 * motion,
+      );
+    }
     dynasty.mesh.position.copy(dynasty.center);
     if (dynasty.glow) dynasty.glow.position.copy(dynasty.center);
+    if (dynasty.cloudGlow) dynasty.cloudGlow.position.copy(dynasty.center);
+    const dust = state.dynastyDust.get(dynasty.dynasty);
+    if (dust) {
+      dust.position.copy(dynasty.center);
+      if (motion) dust.rotation.y += frameDelta * dust.userData.speed;
+    }
   });
   state.authorMarkers.forEach((author) => {
     const key = `${author.dynasty}:${author.authorName}`;
     const focused = key === selectedAuthorKey;
     const hovered = key === state.hoveredAuthorKey;
-    const speedFactor = focused ? 0 : hovered ? 0.18 : motion;
     const dynasty = state.dynastyGroups.get(author.dynasty);
-    if (author.currentOrbitAngle === undefined) author.currentOrbitAngle = author.orbitPhase;
-    author.currentOrbitAngle += frameDelta * author.orbitSpeed * speedFactor;
-    const angle = author.currentOrbitAngle;
-    const localZ = Math.sin(angle) * author.orbitRadiusZ;
-    author.center.set(
-      dynasty.center.x + Math.cos(angle) * author.orbitRadiusX,
-      dynasty.center.y + Math.sin(author.orbitTilt) * localZ,
-      dynasty.center.z + Math.cos(author.orbitTilt) * localZ,
-    );
+    const previewVisible = state.viewMode === 'overview' && author.rank < OVERVIEW_PREVIEW_AUTHORS;
+    const dynastyVisible = state.viewMode === 'dynasty' && author.dynasty === state.focusedDynasty && author.rank < MAX_VISIBLE_AUTHORS;
+    const authorVisible = state.viewMode === 'author' && focused;
+    if (!previewVisible && !dynastyVisible && !authorVisible) return;
+    if (previewVisible) {
+      const speedFactor = hovered ? 0.12 : motion;
+      if (author.currentPreviewAngle === undefined) author.currentPreviewAngle = author.previewAngle;
+      author.currentPreviewAngle += frameDelta * author.previewSpeed * speedFactor;
+      const angle = author.currentPreviewAngle;
+      const localZ = Math.sin(angle) * author.previewRadius * 0.72;
+      author.center.set(
+        dynasty.center.x + Math.cos(angle) * author.previewRadius,
+        dynasty.center.y + Math.sin(author.previewTilt) * localZ + Math.sin(angle * 2) * 5,
+        dynasty.center.z + Math.cos(author.previewTilt) * localZ,
+      );
+    } else if (dynastyVisible) {
+      const offsetX = dynasty.center.x - dynasty.baseCenter.x;
+      const offsetY = dynasty.center.y - dynasty.baseCenter.y;
+      const offsetZ = dynasty.center.z - dynasty.baseCenter.z;
+      const phase = now * author.orbitSpeed + author.phase;
+      author.center.set(
+        author.baseCenter.x + offsetX + Math.cos(phase) * 4 * motion,
+        author.baseCenter.y + offsetY + Math.sin(phase * 1.8) * 5 * motion,
+        author.baseCenter.z + offsetZ + Math.sin(phase) * 4 * motion,
+      );
+    }
     author.mesh.position.copy(author.center);
     if (author.glow) author.glow.position.copy(author.center);
     if (author.cloudGlow) author.cloudGlow.position.copy(author.center);
@@ -938,24 +976,26 @@ function render3D() {
     const active = key === selectedAuthorKey;
     const hovered = state.hoveredAuthorKey === key;
     const hasVisiblePoems = state.visibleAuthorKeys.has(key);
+    const visibleInOverview = state.viewMode === 'overview' && item.rank < OVERVIEW_PREVIEW_AUTHORS && hasVisiblePoems;
     const visibleInDynasty = state.viewMode === 'dynasty' && item.dynasty === selectedDynasty && item.rank < MAX_VISIBLE_AUTHORS && hasVisiblePoems;
     const visibleInAuthor = state.viewMode === 'author' && active;
-    const visible = visibleInDynasty || visibleInAuthor;
+    const visible = visibleInOverview || visibleInDynasty || visibleInAuthor;
     item.mesh.visible = visible;
     if (item.glow) item.glow.visible = visible;
     if (item.cloudGlow) item.cloudGlow.visible = visible;
     if (!visible) return;
     const pulse = hovered ? 1.08 + Math.sin(performance.now() * 0.006) * 0.06 : 1;
-    item.mesh.material.opacity = active || hovered ? 1 : 0.82;
+    item.mesh.material.opacity = active || hovered ? 1 : visibleInOverview ? 0.72 : 0.82;
     const workScale = 0.92 + Math.min(0.72, Math.log1p(item.poems.length) / 9);
-    item.mesh.scale.setScalar((active ? 2.4 : hovered ? 1.7 : workScale) * pulse);
+    const overviewScale = 0.42 + Math.min(0.44, Math.log1p(item.poems.length) / 11);
+    item.mesh.scale.setScalar((active ? 2.4 : hovered ? 1.7 : visibleInOverview ? overviewScale : workScale) * pulse);
     if (item.glow) {
-      item.glow.material.opacity = active ? 0.5 : hovered ? 0.38 : 0.13;
-      item.glow.scale.setScalar((active ? 175 : hovered ? 150 : 120) * pulse);
+      item.glow.material.opacity = active ? 0.5 : hovered ? 0.38 : visibleInOverview ? 0.085 : 0.13;
+      item.glow.scale.setScalar((active ? 175 : hovered ? 150 : visibleInOverview ? 64 : 120) * pulse);
     }
     if (item.cloudGlow) {
-      item.cloudGlow.material.opacity = active ? 0.2 : hovered ? 0.14 : 0.045;
-      item.cloudGlow.scale.setScalar((active ? 320 : 210) * pulse);
+      item.cloudGlow.material.opacity = active ? 0.2 : hovered ? 0.14 : visibleInOverview ? 0.018 : 0.045;
+      item.cloudGlow.scale.setScalar((active ? 320 : visibleInOverview ? 120 : 210) * pulse);
     }
   });
 
@@ -965,21 +1005,24 @@ function render3D() {
     item.mesh.visible = state.viewMode === 'overview' || (state.viewMode === 'dynasty' && active);
     item.glow.visible = item.mesh.visible;
     if (item.cloudGlow) item.cloudGlow.visible = item.mesh.visible;
-    item.mesh.material.opacity = active ? 0.46 : 0.34;
-    item.mesh.scale.setScalar(active ? 1.55 : 1.22);
+    const hovered = item.dynasty === state.hoveredDynasty;
+    const breath = reducedMotion.matches ? 1 : 1 + Math.sin(performance.now() * 0.0012 + item.phase) * 0.045;
+    item.mesh.material.opacity = active ? 0.46 : hovered ? 0.5 : 0.34;
+    item.mesh.scale.setScalar((active ? 1.55 : hovered ? 1.45 : 1.22) * (item.visualScale || 1) * breath);
     if (item.glow) {
-      item.glow.material.opacity = active ? 0.28 : 0.14;
-      item.glow.scale.setScalar(active ? 112 : 92);
+      item.glow.material.opacity = active ? 0.28 : hovered ? 0.25 : 0.14;
+      item.glow.scale.setScalar((active ? 112 : hovered ? 108 : 92) * (item.visualScale || 1) * breath);
     }
     if (item.cloudGlow) {
-      item.cloudGlow.material.opacity = active ? 0.1 : 0.065;
-      item.cloudGlow.scale.setScalar(active ? 430 : 360);
+      item.cloudGlow.material.opacity = active ? 0.1 : hovered ? 0.105 : 0.065;
+      item.cloudGlow.scale.setScalar((active ? 430 : hovered ? 420 : 360) * (item.visualScale || 1) * breath);
     }
   });
 
   state.dynastyDust.forEach((cloud, dynasty) => {
     cloud.visible = state.viewMode !== 'author' || dynasty === selectedDynasty;
-    cloud.material.opacity = state.viewMode === 'overview' ? 0.34 : dynasty === selectedDynasty ? (state.viewMode === 'dynasty' ? 0.31 : 0.025) : 0.012;
+    const dustPulse = reducedMotion.matches ? 0 : Math.sin(performance.now() * 0.0008 + cloud.userData.phase) * 0.045;
+    cloud.material.opacity = state.viewMode === 'overview' ? 0.32 + dustPulse : dynasty === selectedDynasty ? (state.viewMode === 'dynasty' ? 0.31 : 0.025) : 0.012;
     cloud.material.size = state.viewMode === 'dynasty' && dynasty === selectedDynasty ? 2.75 : 2.4;
   });
 
@@ -1037,6 +1080,10 @@ function animate3D(now = performance.now()) {
       line.rotation.y += line.userData.speed;
       line.material.opacity = 0.045 + Math.sin(now * 0.00035 + line.userData.phase) * 0.016;
     });
+    if (state.viewMode === 'overview' && !state.drag.active) {
+      state.orbit.theta += 0.000035;
+      updateCameraFromOrbit();
+    }
   }
   updateOrbitalMotion(now, selectedAuthorKey);
   if (state.trackedAuthorKey) {
@@ -1187,6 +1234,7 @@ canvas3d.addEventListener('pointermove', (event) => {
   const hit = hitTest3D(event.clientX, event.clientY);
   state.hoveredPoemId = null;
   state.hoveredAuthorKey = null;
+  state.hoveredDynasty = null;
   if (hit) {
     if (hit.type === 'poem') {
       state.hoveredPoemId = hit.poem.id;
@@ -1207,6 +1255,7 @@ canvas3d.addEventListener('pointermove', (event) => {
         cloudTooltipEl.style.top = `${event.clientY - rect.top + 12}px`;
       }
     } else if (hit.type === 'dynasty') {
+      state.hoveredDynasty = hit.dynasty;
       canvas3d.style.cursor = 'pointer';
       if (cloudTooltipEl) {
         const info = dynasties.find((item) => item.name === hit.dynasty);
@@ -1228,6 +1277,7 @@ canvas3d.addEventListener('pointermove', (event) => {
 canvas3d.addEventListener('pointerleave', () => {
   state.hoveredPoemId = null;
   state.hoveredAuthorKey = null;
+  state.hoveredDynasty = null;
   if (cloudTooltipEl) cloudTooltipEl.classList.remove('visible');
 });
 canvas3d.addEventListener('contextmenu', (event) => event.preventDefault());
