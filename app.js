@@ -37,6 +37,10 @@ const cloudTooltipEl = document.getElementById('cloudTooltip');
 const levelNavEl = document.getElementById('levelNav');
 const levelTitleEl = document.getElementById('levelTitle');
 const levelDescriptionEl = document.getElementById('levelDescription');
+const sidebarEl = document.querySelector('.sidebar');
+const toggleMobileIndexBtn = document.getElementById('toggleMobileIndex');
+const closeMobileIndexBtn = document.getElementById('closeMobileIndex');
+const mobileIndexCountEl = document.getElementById('mobileIndexCount');
 const poemReaderEl = document.getElementById('poemReader');
 const readerCardEl = poemReaderEl?.querySelector('.poem-reader-card');
 const readerMetaEl = document.getElementById('readerMeta');
@@ -50,6 +54,7 @@ const nextPoemBtn = document.getElementById('nextPoem');
 const locatePoemBtn = document.getElementById('locatePoem');
 const toggleReadingModeBtn = document.getElementById('toggleReadingMode');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const mobileLayout = window.matchMedia('(max-width: 1039px)');
 let readerReturnFocus = null;
 
 const MAX_VISIBLE_AUTHORS = 48;
@@ -312,6 +317,7 @@ function applyFilters() {
 
 function renderResults() {
   resultCountEl.textContent = `${filteredPoems.length} 条`;
+  if (mobileIndexCountEl) mobileIndexCountEl.textContent = filteredPoems.length.toLocaleString('zh-CN');
   resultsEl.innerHTML = filteredPoems.slice(0, 120).map((poem, index) => `
     <button class="result-item ${poem.id === selectedId ? 'selected' : ''}" data-id="${escapeHtml(poem.id)}" aria-label="阅读《${escapeHtml(poem.title)}》">
       <div class="result-item-head">
@@ -324,6 +330,21 @@ function renderResults() {
   `).join('');
   resultsEl.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => selectPoem(btn.dataset.id)));
   resultsEl.querySelector('.result-item.selected')?.scrollIntoView({ block: 'nearest' });
+}
+
+function setMobileIndexOpen(open) {
+  const shouldOpen = Boolean(open && mobileLayout.matches);
+  sidebarEl?.classList.toggle('mobile-index-open', shouldOpen);
+  if (sidebarEl) {
+    if (mobileLayout.matches && !shouldOpen) sidebarEl.setAttribute('inert', '');
+    else sidebarEl.removeAttribute('inert');
+  }
+  document.body.classList.toggle('mobile-index-active', shouldOpen);
+  toggleMobileIndexBtn?.setAttribute('aria-expanded', String(shouldOpen));
+  if (toggleMobileIndexBtn) {
+    const label = toggleMobileIndexBtn.querySelector('span');
+    if (label) label.textContent = shouldOpen ? '收起索引' : '星图索引';
+  }
 }
 
 function getReadingSequence(poem) {
@@ -378,6 +399,7 @@ function navigateReader(button) {
 async function selectPoem(id) {
   const requestedId = id;
   selectedId = id;
+  setMobileIndexOpen(false);
   let poem = poems.find((item) => item.id === id);
   try {
     if (!poem) throw new Error('找不到这首诗的索引');
@@ -415,6 +437,7 @@ function resetView() {
   activeAuthor = '全部';
   selectedId = null;
   searchInput.value = '';
+  setMobileIndexOpen(false);
   closePoemReader();
   setOverviewMode();
   renderFilters();
@@ -1252,7 +1275,6 @@ async function loadData() {
   } catch (error) {
     console.error('[Poets Cloud] loadData failed', error);
     setDebug(`加载失败：${error.message}`);
-    detailEl.textContent = `加载失败：${error.message}`;
   }
 }
 
@@ -1269,6 +1291,7 @@ searchInput.addEventListener('input', async (event) => {
     .filter((poem) => normalizeText(`${poem.title}${poem.authorName}${poem.dynasty}${poem.meter}${poem.excerpt}`).includes(term))
     .map((poem) => poem.id));
   applyFilters();
+  setMobileIndexOpen(true);
   if (term.length < 2) return;
   try {
     setDebug('正在检索完整诗文…');
@@ -1281,6 +1304,14 @@ searchInput.addEventListener('input', async (event) => {
   }
 });
 resetViewBtn.addEventListener('click', resetView);
+toggleMobileIndexBtn?.addEventListener('click', () => {
+  setMobileIndexOpen(!sidebarEl?.classList.contains('mobile-index-open'));
+});
+closeMobileIndexBtn?.addEventListener('click', () => setMobileIndexOpen(false));
+mobileLayout.addEventListener('change', (event) => {
+  setMobileIndexOpen(false);
+});
+setMobileIndexOpen(false);
 poemReaderEl?.querySelectorAll('[data-reader-close]').forEach((button) => button.addEventListener('click', closePoemReader));
 previousPoemBtn?.addEventListener('click', () => navigateReader(previousPoemBtn));
 nextPoemBtn?.addEventListener('click', () => navigateReader(nextPoemBtn));
@@ -1419,6 +1450,11 @@ window.addEventListener('keydown', (event) => {
     if (event.key === 'ArrowLeft') navigateReader(previousPoemBtn);
     if (event.key === 'ArrowRight') navigateReader(nextPoemBtn);
     if (['Escape', 'ArrowLeft', 'ArrowRight'].includes(event.key)) event.preventDefault();
+    return;
+  }
+  if (event.key === 'Escape' && sidebarEl?.classList.contains('mobile-index-open')) {
+    setMobileIndexOpen(false);
+    event.preventDefault();
     return;
   }
   if (!state.renderer) return;

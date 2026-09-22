@@ -58,13 +58,19 @@
           <div id="debugOverlay" class="debug-overlay">星系正在苏醒...</div>
         </section>
 
+        <button id="toggleMobileIndex" class="mobile-index-toggle" type="button" aria-controls="poemIndexPanel" aria-expanded="false">
+          <span>星图索引</span>
+          <strong id="mobileIndexCount">0</strong>
+        </button>
+
         <aside class="sidebar" aria-label="诗词信息浮窗">
-          <section class="floating-window list-panel">
+          <section class="floating-window list-panel" id="poemIndexPanel">
             <div class="window-bar compact">
               <div class="window-title">
                 <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
                 <span>星图索引</span>
               </div>
+              <button id="closeMobileIndex" class="mobile-index-close" type="button" aria-label="收起诗词索引">收起</button>
             </div>
             <div class="panel-head">
               <h2>结果列表</h2>
