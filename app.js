@@ -87,7 +87,7 @@ const state = {
     pinchDistance: 0,
     pinchMidpoint: { x: 0, y: 0 },
   },
-  pressPreview: { timer: null, pointerId: null, x: 0, y: 0, triggered: false },
+  pressPreview: { timer: null, pointerId: null, x: 0, y: 0, triggered: false, target: null },
   orbit: { radius: 820, theta: 0.25, phi: 0.66 },
   viewMode: 'overview',
   focusedDynasty: null,
@@ -1611,7 +1611,7 @@ function showCloudTooltip(hit, clientX, clientY, touchPreview = false) {
       <div class="tooltip-title">${escapeHtml(hit.poem.title)}</div>
       <div class="tooltip-meta">${escapeHtml(hit.poem.authorName)} · ${escapeHtml(hit.poem.meter)}</div>
       <div class="tooltip-excerpt">${escapeHtml(hit.poem.excerpt || '点击阅读全文')}</div>
-      <div class="tooltip-hint">${touchPreview ? '轻点星球打开诗作' : '单击打开阅读卡'}</div>
+      <div class="tooltip-hint">${touchPreview ? '保持长按，松开后阅读完整诗作' : '单击打开阅读卡'}</div>
     `;
   } else if (hit.type === 'author') {
     const authorInfo = state.authorGroups.get(`${hit.dynasty}:${hit.authorName}`);
@@ -1642,7 +1642,10 @@ function clearLongPressTimer() {
 function cancelLongPressPreview(hidePreview = false) {
   clearLongPressTimer();
   if (hidePreview && state.pressPreview.triggered) hideCloudTooltip();
-  if (hidePreview) state.pressPreview.triggered = false;
+  if (hidePreview) {
+    state.pressPreview.triggered = false;
+    state.pressPreview.target = null;
+  }
 }
 
 function scheduleLongPressPreview(event) {
@@ -1652,6 +1655,7 @@ function scheduleLongPressPreview(event) {
   state.pressPreview.pointerId = event.pointerId;
   state.pressPreview.x = event.clientX;
   state.pressPreview.y = event.clientY;
+  state.pressPreview.target = hit;
   state.pressPreview.timer = window.setTimeout(() => {
     if (!state.drag.active || state.drag.moved || state.drag.pointers.size !== 1) return;
     showCloudTooltip(hit, state.pressPreview.x, state.pressPreview.y, true);
@@ -1787,6 +1791,9 @@ canvas3d.addEventListener('pointermove', (event) => {
 });
 function finishCameraDrag(event) {
   if (!state.drag.active) return;
+  const longPressTarget = event?.pointerType === 'touch' && state.pressPreview.triggered
+    ? state.pressPreview.target
+    : null;
   if (event?.pointerType === 'touch') {
     clearLongPressTimer();
     state.drag.pointers.delete(event.pointerId);
@@ -1810,6 +1817,11 @@ function finishCameraDrag(event) {
   if (event && canvas3d.hasPointerCapture(event.pointerId)) canvas3d.releasePointerCapture(event.pointerId);
   state.drag.pinchDistance = 0;
   canvas3d.style.cursor = 'grab';
+  if (longPressTarget?.type === 'poem') {
+    state.pressPreview.triggered = false;
+    state.pressPreview.target = null;
+    activateUniverseTarget(longPressTarget);
+  }
 }
 canvas3d.addEventListener('pointerup', finishCameraDrag);
 canvas3d.addEventListener('pointercancel', (event) => {
