@@ -267,9 +267,12 @@ h1 {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
   color: rgba(226, 232, 240, 0.78);
   backdrop-filter: blur(7px);
+  pointer-events: auto;
   white-space: nowrap;
   font-size: 11px;
+  font-family: inherit;
   letter-spacing: 0.08em;
+  cursor: pointer;
   transition: opacity 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
@@ -344,6 +347,13 @@ h1 {
 }
 
 .cloud-tooltip.visible { opacity: 1; }
+.cloud-tooltip.touch-preview {
+  max-width: min(270px, calc(100vw - 28px));
+  transform: translate(-50%, calc(-100% - 14px));
+  border-color: rgba(167, 139, 250, 0.46);
+  background: rgba(7, 12, 29, 0.96);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.5), 0 0 28px rgba(125, 211, 252, 0.1);
+}
 .tooltip-eyebrow { margin-bottom: 5px; color: var(--accent); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; }
 .tooltip-title { margin-bottom: 3px; font-weight: 700; }
 .tooltip-meta { color: var(--muted); font-size: 12px; }
@@ -578,7 +588,7 @@ body.reader-immersive .reader-scroll { padding-right: 100px; padding-left: 100px
   :root { --sidebar-width: 330px; }
   .topbar { width: 232px; }
   .controls { left: calc(50% - 49px); width: calc(100vw - 650px); }
-  .cloud-label.author { display: none; }
+  .cloud-label.author { font-size: 11px; }
 }
 
 @media (max-width: 1039px) {
@@ -759,6 +769,7 @@ body.reader-immersive .reader-scroll { padding-right: 100px; padding-left: 100px
   }
   .desktop-gesture-hint { display: none; }
   .mobile-gesture-hint { display: inline; }
+  .cloud-label { min-height: 34px; padding: 7px 10px; }
 
   .level-nav {
     position: fixed;

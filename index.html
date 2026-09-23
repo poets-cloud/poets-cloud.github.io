@@ -35,7 +35,7 @@
       <main class="layout">
         <section class="cloud">
           <canvas id="cloudCanvas2d"></canvas>
-          <canvas id="cloudCanvas3d" aria-label="诗词宇宙：单指拖动移动镜头，双指捏合缩放"></canvas>
+          <canvas id="cloudCanvas3d" aria-label="诗词宇宙：单指拖动旋转视角，双指移动和缩放，长按星球预览名称"></canvas>
           <nav id="levelNav" class="level-nav" aria-label="诗词宇宙层级">
             <button id="levelBack" class="level-back" type="button" aria-label="返回上一级" title="返回上一级" disabled>←</button>
             <button type="button" data-level="overview" class="active">诗词宇宙</button>
@@ -48,7 +48,7 @@
             <strong id="levelTitle">朝代星系</strong>
             <span id="levelDescription">选择一个朝代进入；诗人和诗作将在下一层出现</span>
           </div>
-          <div id="cloudLabels" class="cloud-labels" aria-hidden="true"></div>
+          <div id="cloudLabels" class="cloud-labels" aria-label="可探索的星球名称"></div>
           <div id="cloudTooltip" class="cloud-tooltip" role="status" aria-live="polite"></div>
           <div class="cloud-legend" aria-label="星云层级图例">
             <span><i class="legend-dot dynasty-dot"></i>朝代</span>
@@ -57,7 +57,7 @@
           </div>
           <div class="cloud-hint">
             <span class="desktop-gesture-hint">左键拖拽旋转 · 右键 / 中键 / Shift + 左键拖拽平移 · 滚轮缩放</span>
-            <span class="mobile-gesture-hint">单指拖移 · 双指捏合缩放</span>
+            <span class="mobile-gesture-hint">单指旋转 · 双指移动/缩放 · 长按预览</span>
           </div>
           <div id="debugOverlay" class="debug-overlay">星系正在苏醒...</div>
         </section>

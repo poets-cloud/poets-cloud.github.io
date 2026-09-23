@@ -87,6 +87,7 @@ const state = {
     pinchDistance: 0,
     pinchMidpoint: { x: 0, y: 0 },
   },
+  pressPreview: { timer: null, pointerId: null, x: 0, y: 0, triggered: false },
   orbit: { radius: 820, theta: 0.25, phi: 0.66 },
   viewMode: 'overview',
   focusedDynasty: null,
@@ -126,6 +127,7 @@ const state = {
   visibleAuthorKeys: new Set(),
   startedAt: performance.now(),
   lastMotionAt: performance.now(),
+  lastInteractionAt: performance.now(),
 };
 
 function setDebug(message) { if (debugOverlay) debugOverlay.textContent = message; }
@@ -857,7 +859,11 @@ function buildFocusSystem(authorGroup) {
       center.y + Math.sin(ring.tilt) * localZ,
       center.z + Math.cos(ring.tilt) * localZ,
     );
-    mesh.userData = { type: 'poem', id: poem.id, poem, focusIndex: index };
+    mesh.userData = {
+      type: 'poem', id: poem.id, poem, focusIndex: index,
+      orbitAngle: angle, orbitRadiusX: ring.x, orbitRadiusZ: ring.z, orbitTilt: ring.tilt,
+      orbitSpeed: (0.000026 + (index % 5) * 0.000003) * (index % 3 === 0 ? -1 : 1),
+    };
     mesh.scale.setScalar(poem.id === selectedId ? 2.1 : 1 + Math.min(0.55, (poem.importance || 0) * 0.22));
     state.focusGroup.add(mesh);
     state.focusPoemMeshes.push(mesh);
@@ -955,37 +961,102 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
   const labels = [];
   if (state.viewMode === 'overview') {
     state.dynastyMarkers.forEach((item) => labels.push({
-      text: `${item.dynasty} · ${item.authorCount || 0} 位诗人`, position: item.mesh.position, kind: 'dynasty', active: item.dynasty === state.hoveredDynasty,
+      text: `${item.dynasty} · ${item.authorCount || 0} 位诗人`, position: item.mesh.position, kind: 'dynasty',
+      key: `dynasty:${item.dynasty}`, dynasty: item.dynasty,
+      active: item.dynasty === state.hoveredDynasty, priority: 80 + Math.log1p(item.authorCount || 0),
     }));
   } else if (state.viewMode === 'dynasty') {
     state.authorMarkers
       .filter((item) => item.dynasty === selectedDynasty && item.rank < 14 && item.mesh?.visible)
-      .forEach((item) => labels.push({ text: item.authorName, position: item.mesh.position, kind: 'author', active: false }));
+      .forEach((item) => labels.push({
+        text: item.authorName, position: item.mesh.position, kind: 'author', key: `author:${item.dynasty}:${item.authorName}`,
+        dynasty: item.dynasty, authorName: item.authorName, active: false, priority: 60 - item.rank,
+      }));
     const hovered = state.hoveredAuthorKey ? state.authorGroups.get(state.hoveredAuthorKey) : null;
     if (hovered && hovered.mesh?.visible && hovered.rank >= 14) {
-      labels.push({ text: hovered.authorName, position: hovered.mesh.position, kind: 'author', active: true });
+      labels.push({
+        text: hovered.authorName, position: hovered.mesh.position, kind: 'author', key: `author:${hovered.dynasty}:${hovered.authorName}`,
+        dynasty: hovered.dynasty, authorName: hovered.authorName, active: true, priority: 120,
+      });
     }
   } else if (state.viewMode === 'author') {
     const author = selectedAuthorKey ? state.authorGroups.get(selectedAuthorKey) : null;
-    if (author?.mesh) labels.push({ text: author.authorName, position: author.mesh.position, kind: 'author', active: true });
+    if (author?.mesh) labels.push({
+      text: author.authorName, position: author.mesh.position, kind: 'author', key: `author:${author.dynasty}:${author.authorName}`,
+      dynasty: author.dynasty, authorName: author.authorName, active: true, priority: 130,
+    });
     state.focusPoemMeshes.forEach((mesh, index) => {
       const poem = mesh.userData.poem;
       if (index < 12 || poem.id === selectedId || poem.id === state.hoveredPoemId) {
-        labels.push({ text: poem.title, position: mesh.position, kind: 'poem', active: poem.id === selectedId });
+        const active = poem.id === selectedId || poem.id === state.hoveredPoemId;
+        labels.push({
+          text: poem.title, position: mesh.position, kind: 'poem', active,
+          key: `poem:${poem.id}`, poemId: poem.id,
+          priority: active ? 150 : 70 - index + Math.min(8, poem.importance || 0),
+        });
       }
     });
   }
-  cloudLabelsEl.innerHTML = labels.map((label) => {
+
+  const labelBudget = state.viewMode === 'overview'
+    ? 4
+    : state.viewMode === 'dynasty'
+      ? (state.orbit.radius > 850 ? 5 : state.orbit.radius > 620 ? 8 : 14)
+      : (state.orbit.radius > 650 ? 4 : state.orbit.radius > 470 ? 6 : state.orbit.radius > 340 ? 9 : 13);
+  const candidates = labels.map((label) => {
     const projected = label.position.clone().project(state.camera);
     const x = (projected.x * 0.5 + 0.5) * state.width;
     const y = (-projected.y * 0.5 + 0.5) * state.height;
     const visible = projected.z > -1 && projected.z < 1 && x > 25 && x < state.width - 25 && y > 20 && y < state.height - 35;
-    return `<span class="cloud-label ${label.kind} ${label.active ? 'is-active' : ''}" style="left:${x}px;top:${y}px;opacity:${visible ? 1 : 0}">${label.text}</span>`;
-  }).join('');
+    const width = clamp(Array.from(label.text).length * (label.kind === 'poem' ? 12 : 11) + 22, 48, 240);
+    const height = label.kind === 'poem' ? 29 : 31;
+    return { ...label, x, y, visible, width, height };
+  }).filter((label) => label.visible).sort((a, b) => b.priority - a.priority);
+
+  const placed = [];
+  const padding = mobileLayout.matches ? 7 : 5;
+  candidates.forEach((label) => {
+    if (placed.length >= labelBudget && !label.active) return;
+    const box = {
+      left: label.x - label.width / 2 - padding,
+      right: label.x + label.width / 2 + padding,
+      top: label.y - label.height / 2 - padding,
+      bottom: label.y + label.height / 2 + padding,
+    };
+    const overlaps = placed.some((item) => !(
+      box.right < item.box.left || box.left > item.box.right || box.bottom < item.box.top || box.top > item.box.bottom
+    ));
+    if (!overlaps) placed.push({ label, box });
+  });
+
+  const existing = new Map([...cloudLabelsEl.querySelectorAll('.cloud-label')].map((element) => [element.dataset.labelKey, element]));
+  const desiredKeys = new Set();
+  placed.forEach(({ label }) => {
+    desiredKeys.add(label.key);
+    let element = existing.get(label.key);
+    if (!element) {
+      element = document.createElement('button');
+      element.type = 'button';
+      element.dataset.labelKey = label.key;
+      cloudLabelsEl.appendChild(element);
+    }
+    element.className = `cloud-label ${label.kind} ${label.active ? 'is-active' : ''}`;
+    element.textContent = label.text;
+    element.style.left = `${label.x}px`;
+    element.style.top = `${label.y}px`;
+    element.dataset.labelKind = label.kind;
+    element.dataset.dynasty = label.dynasty || '';
+    element.dataset.authorName = label.authorName || '';
+    element.dataset.poemId = label.poemId || '';
+    element.setAttribute('aria-label', label.kind === 'poem' ? `打开诗作《${label.text}》` : `进入${label.text}`);
+  });
+  existing.forEach((element, key) => {
+    if (!desiredKeys.has(key)) element.remove();
+  });
 }
 
 function updateOrbitalMotion(now, selectedAuthorKey) {
-  const motion = reducedMotion.matches ? 0 : 1;
+  const motion = reducedMotion.matches || poemReaderEl?.classList.contains('is-open') ? 0 : 1;
   const frameDelta = Math.min(50, Math.max(0, now - state.lastMotionAt));
   state.lastMotionAt = now;
   state.dynastyMarkers.forEach((dynasty) => {
@@ -1056,6 +1127,21 @@ function updateOrbitalMotion(now, selectedAuthorKey) {
       );
     });
   });
+  if (state.viewMode === 'author' && state.trackedAuthorKey) {
+    const focusedAuthor = state.authorGroups.get(state.trackedAuthorKey);
+    if (focusedAuthor) {
+      state.focusPoemMeshes.forEach((mesh) => {
+        const data = mesh.userData;
+        data.orbitAngle += frameDelta * data.orbitSpeed * motion;
+        const localZ = Math.sin(data.orbitAngle) * data.orbitRadiusZ;
+        mesh.position.set(
+          focusedAuthor.center.x + Math.cos(data.orbitAngle) * data.orbitRadiusX,
+          focusedAuthor.center.y + Math.sin(data.orbitTilt) * localZ,
+          focusedAuthor.center.z + Math.cos(data.orbitTilt) * localZ,
+        );
+      });
+    }
+  }
   state.relationLines.forEach((line) => {
     const mesh = state.poemMeshById.get(line.userData.poem.id);
     if (!mesh) return;
@@ -1279,7 +1365,9 @@ function animate3D(now = performance.now()) {
   state.frame = requestAnimationFrame(animate3D);
   const selected = poems.find((item) => item.id === selectedId);
   const selectedAuthorKey = selected ? `${selected.dynasty}:${selected.authorName}` : null;
-  const motion = reducedMotion.matches || selectedId || state.drag.active ? 0 : 1;
+  const readerOpen = poemReaderEl?.classList.contains('is-open');
+  const motion = reducedMotion.matches || readerOpen ? 0 : 1;
+  const autoOrbit = motion && !state.drag.active && now - state.lastInteractionAt > 1200;
   if (motion) {
     state.starField.rotation.y = Math.sin(now * 0.000012) * 0.025;
     state.starField.rotation.x = Math.cos(now * 0.000009) * 0.012;
@@ -1287,8 +1375,9 @@ function animate3D(now = performance.now()) {
       line.rotation.y += line.userData.speed;
       line.material.opacity = 0.045 + Math.sin(now * 0.00035 + line.userData.phase) * 0.016;
     });
-    if (state.viewMode === 'overview' && !state.drag.active) {
-      state.orbit.theta += 0.000035;
+    if (autoOrbit) {
+      const orbitSpeed = state.viewMode === 'overview' ? 0.00005 : state.viewMode === 'dynasty' ? 0.00011 : 0.00014;
+      state.orbit.theta += orbitSpeed;
       updateCameraFromOrbit();
     }
   }
@@ -1327,6 +1416,37 @@ function hitTest3D(clientX, clientY) {
   if (userData.type === 'author') return { type: 'author', dynasty: userData.dynasty, authorName: userData.authorName };
   if (userData.type === 'dynasty') return { type: 'dynasty', dynasty: userData.dynasty };
   return null;
+}
+
+function hitTestNearby(clientX, clientY, maxDistance = 34) {
+  if (!state.camera) return null;
+  const rect = canvas3d.getBoundingClientRect();
+  const targets = [];
+  if (state.viewMode === 'overview') {
+    state.dynastyMarkers.filter((item) => item.mesh?.visible).forEach((item) => targets.push({
+      position: item.mesh.position, hit: { type: 'dynasty', dynasty: item.dynasty },
+    }));
+  } else if (state.viewMode === 'dynasty') {
+    state.authorMarkers.filter((item) => item.mesh?.visible).forEach((item) => targets.push({
+      position: item.mesh.position, hit: { type: 'author', dynasty: item.dynasty, authorName: item.authorName },
+    }));
+  } else {
+    state.focusPoemMeshes.filter((mesh) => mesh.visible).forEach((mesh) => targets.push({
+      position: mesh.position, hit: { type: 'poem', poem: mesh.userData.poem },
+    }));
+  }
+  let nearest = null;
+  targets.forEach((target) => {
+    const projected = target.position.clone().project(state.camera);
+    if (projected.z <= -1 || projected.z >= 1) return;
+    const x = rect.left + (projected.x * 0.5 + 0.5) * rect.width;
+    const y = rect.top + (-projected.y * 0.5 + 0.5) * rect.height;
+    const distance = Math.hypot(clientX - x, clientY - y);
+    if (distance <= maxDistance && (!nearest || distance < nearest.distance)) nearest = { ...target.hit, distance };
+  });
+  if (!nearest) return null;
+  delete nearest.distance;
+  return nearest;
 }
 
 async function dataGet(path) {
@@ -1461,6 +1581,68 @@ if (toggleFiltersBtn && controlPanelEl) {
   });
 }
 
+function hideCloudTooltip() {
+  if (!cloudTooltipEl) return;
+  cloudTooltipEl.classList.remove('visible', 'touch-preview');
+}
+
+function showCloudTooltip(hit, clientX, clientY, touchPreview = false) {
+  if (!cloudTooltipEl || !hit) return;
+  if (hit.type === 'poem') {
+    cloudTooltipEl.innerHTML = `
+      <div class="tooltip-eyebrow">诗作预览</div>
+      <div class="tooltip-title">${escapeHtml(hit.poem.title)}</div>
+      <div class="tooltip-meta">${escapeHtml(hit.poem.authorName)} · ${escapeHtml(hit.poem.meter)}</div>
+      <div class="tooltip-excerpt">${escapeHtml(hit.poem.excerpt || '点击阅读全文')}</div>
+      <div class="tooltip-hint">${touchPreview ? '轻点星球打开诗作' : '单击打开阅读卡'}</div>
+    `;
+  } else if (hit.type === 'author') {
+    const authorInfo = state.authorGroups.get(`${hit.dynasty}:${hit.authorName}`);
+    cloudTooltipEl.innerHTML = `<div class="tooltip-eyebrow">诗人恒星</div><div class="tooltip-title">${escapeHtml(hit.authorName)}</div><div class="tooltip-meta">${escapeHtml(hit.dynasty)} · ${authorInfo ? authorInfo.poems.length : 0} 首诗</div>`;
+  } else if (hit.type === 'dynasty') {
+    const info = dynasties.find((item) => item.name === hit.dynasty);
+    cloudTooltipEl.innerHTML = `<div class="tooltip-eyebrow">朝代星系</div><div class="tooltip-title">${escapeHtml(hit.dynasty)}代</div><div class="tooltip-meta">${info?.workCount?.toLocaleString() || '—'} 首诗 · ${info?.authorCount?.toLocaleString() || '—'} 位诗人</div>`;
+  }
+  const rect = cloudEl.getBoundingClientRect();
+  if (touchPreview) {
+    cloudTooltipEl.classList.add('touch-preview');
+    cloudTooltipEl.style.left = `${clamp(clientX - rect.left, 105, Math.max(105, rect.width - 105))}px`;
+    cloudTooltipEl.style.top = `${clamp(clientY - rect.top, 185, Math.max(185, rect.height - 105))}px`;
+  } else {
+    cloudTooltipEl.classList.remove('touch-preview');
+    cloudTooltipEl.style.left = `${clientX - rect.left + 12}px`;
+    cloudTooltipEl.style.top = `${clientY - rect.top + 12}px`;
+  }
+  cloudTooltipEl.classList.add('visible');
+}
+
+function clearLongPressTimer() {
+  if (state.pressPreview.timer) window.clearTimeout(state.pressPreview.timer);
+  state.pressPreview.timer = null;
+  state.pressPreview.pointerId = null;
+}
+
+function cancelLongPressPreview(hidePreview = false) {
+  clearLongPressTimer();
+  if (hidePreview && state.pressPreview.triggered) hideCloudTooltip();
+  if (hidePreview) state.pressPreview.triggered = false;
+}
+
+function scheduleLongPressPreview(event) {
+  cancelLongPressPreview(true);
+  const hit = hitTest3D(event.clientX, event.clientY) || hitTestNearby(event.clientX, event.clientY);
+  if (!hit) return;
+  state.pressPreview.pointerId = event.pointerId;
+  state.pressPreview.x = event.clientX;
+  state.pressPreview.y = event.clientY;
+  state.pressPreview.timer = window.setTimeout(() => {
+    if (!state.drag.active || state.drag.moved || state.drag.pointers.size !== 1) return;
+    showCloudTooltip(hit, state.pressPreview.x, state.pressPreview.y, true);
+    state.pressPreview.triggered = true;
+    state.drag.suppressClick = true;
+  }, 520);
+}
+
 canvas3d.addEventListener('pointermove', (event) => {
   if (!state.renderer || state.drag.active) return;
   const hit = hitTest3D(event.clientX, event.clientY);
@@ -1471,44 +1653,17 @@ canvas3d.addEventListener('pointermove', (event) => {
     if (hit.type === 'poem') {
       state.hoveredPoemId = hit.poem.id;
       canvas3d.style.cursor = 'pointer';
-      if (cloudTooltipEl) {
-        cloudTooltipEl.innerHTML = `
-          <div class="tooltip-eyebrow">诗作预览</div>
-          <div class="tooltip-title">${escapeHtml(hit.poem.title)}</div>
-          <div class="tooltip-meta">${escapeHtml(hit.poem.authorName)} · ${escapeHtml(hit.poem.meter)}</div>
-          <div class="tooltip-excerpt">${escapeHtml(hit.poem.excerpt || '点击阅读全文')}</div>
-          <div class="tooltip-hint">单击打开阅读卡</div>
-        `;
-        cloudTooltipEl.classList.add('visible');
-      }
     } else if (hit.type === 'author') {
       state.hoveredAuthorKey = `${hit.dynasty}:${hit.authorName}`;
       canvas3d.style.cursor = 'pointer';
-      if (cloudTooltipEl) {
-        const authorInfo = state.authorGroups.get(state.hoveredAuthorKey);
-        cloudTooltipEl.innerHTML = `<div class="tooltip-title">${hit.authorName}</div><div class="tooltip-meta">${hit.dynasty} · ${authorInfo ? authorInfo.poems.length : 0} 首诗</div>`;
-        cloudTooltipEl.classList.add('visible');
-        const rect = cloudEl.getBoundingClientRect();
-        cloudTooltipEl.style.left = `${event.clientX - rect.left + 12}px`;
-        cloudTooltipEl.style.top = `${event.clientY - rect.top + 12}px`;
-      }
     } else if (hit.type === 'dynasty') {
       state.hoveredDynasty = hit.dynasty;
       canvas3d.style.cursor = 'pointer';
-      if (cloudTooltipEl) {
-        const info = dynasties.find((item) => item.name === hit.dynasty);
-        cloudTooltipEl.innerHTML = `<div class="tooltip-title">${hit.dynasty}代</div><div class="tooltip-meta">${info?.workCount?.toLocaleString() || '—'} 首诗 · ${info?.authorCount?.toLocaleString() || '—'} 位诗人</div>`;
-        cloudTooltipEl.classList.add('visible');
-      }
     }
-    if (cloudTooltipEl) {
-      const rect = cloudEl.getBoundingClientRect();
-      cloudTooltipEl.style.left = `${event.clientX - rect.left + 12}px`;
-      cloudTooltipEl.style.top = `${event.clientY - rect.top + 12}px`;
-    }
+    showCloudTooltip(hit, event.clientX, event.clientY);
   } else {
     canvas3d.style.cursor = 'grab';
-    if (cloudTooltipEl) cloudTooltipEl.classList.remove('visible');
+    hideCloudTooltip();
   }
   state.pointerClient = { x: event.clientX, y: event.clientY };
 });
@@ -1516,7 +1671,7 @@ canvas3d.addEventListener('pointerleave', () => {
   state.hoveredPoemId = null;
   state.hoveredAuthorKey = null;
   state.hoveredDynasty = null;
-  if (cloudTooltipEl) cloudTooltipEl.classList.remove('visible');
+  if (!state.pressPreview.triggered) hideCloudTooltip();
 });
 canvas3d.addEventListener('contextmenu', (event) => event.preventDefault());
 canvas3d.addEventListener('auxclick', (event) => event.preventDefault());
@@ -1545,6 +1700,7 @@ function beginPinchGesture() {
 
 canvas3d.addEventListener('pointerdown', (event) => {
   event.preventDefault();
+  state.lastInteractionAt = performance.now();
   if (event.pointerType === 'touch') {
     state.drag.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   }
@@ -1553,7 +1709,7 @@ canvas3d.addEventListener('pointerdown', (event) => {
     state.drag.moved = false;
     state.drag.suppressClick = false;
   }
-  state.drag.mode = event.pointerType === 'touch' || (event.buttons & 6) !== 0 || event.shiftKey ? 'pan' : 'rotate';
+  state.drag.mode = event.pointerType !== 'touch' && ((event.buttons & 6) !== 0 || event.shiftKey) ? 'pan' : 'rotate';
   state.drag.x = event.clientX;
   state.drag.y = event.clientY;
   state.drag.startX = event.clientX;
@@ -1561,13 +1717,19 @@ canvas3d.addEventListener('pointerdown', (event) => {
   if (state.drag.pointers.size >= 2) beginPinchGesture();
   canvas3d.style.cursor = state.drag.mode === 'pan' ? 'move' : 'grabbing';
   canvas3d.setPointerCapture(event.pointerId);
+  if (event.pointerType === 'touch') {
+    if (state.drag.pointers.size === 1) scheduleLongPressPreview(event);
+    else cancelLongPressPreview(true);
+  }
 });
 canvas3d.addEventListener('pointermove', (event) => {
   if (!state.drag.active || !state.renderer) return;
   event.preventDefault();
   if (event.pointerType === 'touch' && state.drag.pointers.has(event.pointerId)) {
     state.drag.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (Math.hypot(event.clientX - state.drag.startX, event.clientY - state.drag.startY) >= 8) cancelLongPressPreview(true);
     if (state.drag.pointers.size >= 2) {
+      cancelLongPressPreview(true);
       const [first, second] = getTouchPair();
       const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y));
       const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
@@ -1602,6 +1764,7 @@ canvas3d.addEventListener('pointermove', (event) => {
 function finishCameraDrag(event) {
   if (!state.drag.active) return;
   if (event?.pointerType === 'touch') {
+    clearLongPressTimer();
     state.drag.pointers.delete(event.pointerId);
     if (canvas3d.hasPointerCapture(event.pointerId)) canvas3d.releasePointerCapture(event.pointerId);
     if (state.drag.pointers.size >= 2) {
@@ -1610,7 +1773,7 @@ function finishCameraDrag(event) {
     }
     if (state.drag.pointers.size === 1) {
       const remaining = state.drag.pointers.values().next().value;
-      state.drag.mode = 'pan';
+      state.drag.mode = 'rotate';
       state.drag.x = remaining.x;
       state.drag.y = remaining.y;
       state.drag.startX = remaining.x;
@@ -1625,10 +1788,14 @@ function finishCameraDrag(event) {
   canvas3d.style.cursor = 'grab';
 }
 canvas3d.addEventListener('pointerup', finishCameraDrag);
-canvas3d.addEventListener('pointercancel', finishCameraDrag);
+canvas3d.addEventListener('pointercancel', (event) => {
+  cancelLongPressPreview(true);
+  finishCameraDrag(event);
+});
 window.addEventListener('wheel', (event) => {
   if (!state.renderer || event.target !== canvas3d) return;
   event.preventDefault();
+  state.lastInteractionAt = performance.now();
   state.orbit.radius += event.deltaY * 3;
   stabilizeOrbit();
   updateCameraFromOrbit();
@@ -1647,6 +1814,7 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (!state.renderer) return;
+  state.lastInteractionAt = performance.now();
   const step = 0.06;
   if (event.key === 'ArrowLeft') state.orbit.theta -= step;
   if (event.key === 'ArrowRight') state.orbit.theta += step;
@@ -1658,32 +1826,58 @@ window.addEventListener('keydown', (event) => {
   updateCameraFromOrbit();
 });
 window.addEventListener('resize', resize);
-window.addEventListener('click', async (event) => {
-  if (event.target !== canvas3d) return;
-  if (state.drag.suppressClick) {
-    state.drag.suppressClick = false;
-    return;
-  }
-  const hit = hitTest3D(event.clientX, event.clientY);
-  if (hit && hit.type === 'poem') {
+
+async function activateUniverseTarget(hit) {
+  if (!hit) return;
+  state.lastInteractionAt = performance.now();
+  hideCloudTooltip();
+  if (hit.type === 'poem') {
     await selectPoem(hit.poem.id);
-  } else if (hit && hit.type === 'author') {
+  } else if (hit.type === 'author') {
     const authorGroup = state.authorGroups.get(`${hit.dynasty}:${hit.authorName}`);
-    if (authorGroup) {
-      activeDynasty = authorGroup.dynasty;
-      activeAuthor = authorGroup.authorName;
-      setFocusMode(authorGroup);
-      renderFilters();
-      applyFilters();
-      syncDirectoryHistory('push');
-    }
-  } else if (hit && hit.type === 'dynasty') {
+    if (!authorGroup) return;
+    activeDynasty = authorGroup.dynasty;
+    activeAuthor = authorGroup.authorName;
+    setFocusMode(authorGroup);
+    renderFilters();
+    applyFilters();
+    syncDirectoryHistory('push');
+  } else if (hit.type === 'dynasty') {
     activeDynasty = hit.dynasty;
     activeAuthor = '全部';
     setDynastyMode(hit.dynasty);
     renderFilters();
     applyFilters();
     syncDirectoryHistory('push');
+  }
+}
+
+window.addEventListener('click', async (event) => {
+  if (event.target !== canvas3d) return;
+  if (state.drag.suppressClick) {
+    state.drag.suppressClick = false;
+    return;
+  }
+  const hit = hitTest3D(event.clientX, event.clientY) || (mobileLayout.matches ? hitTestNearby(event.clientX, event.clientY) : null);
+  await activateUniverseTarget(hit);
+});
+
+cloudLabelsEl?.addEventListener('pointerdown', () => {
+  state.lastInteractionAt = performance.now();
+});
+
+cloudLabelsEl?.addEventListener('click', async (event) => {
+  const label = event.target.closest('.cloud-label');
+  if (!label) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (label.dataset.labelKind === 'poem') {
+    const poem = poems.find((item) => item.id === label.dataset.poemId);
+    if (poem) await activateUniverseTarget({ type: 'poem', poem });
+  } else if (label.dataset.labelKind === 'author') {
+    await activateUniverseTarget({ type: 'author', dynasty: label.dataset.dynasty, authorName: label.dataset.authorName });
+  } else if (label.dataset.labelKind === 'dynasty') {
+    await activateUniverseTarget({ type: 'dynasty', dynasty: label.dataset.dynasty });
   }
 });
 
