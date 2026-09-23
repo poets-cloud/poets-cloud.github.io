@@ -93,6 +93,7 @@ const state = {
   focusedDynasty: null,
   trackedAuthorKey: null,
   orbitTarget: new THREE.Vector3(0, 0, 0),
+  panOffset: new THREE.Vector3(0, 0, 0),
   cameraTarget: new THREE.Vector3(0, 0, 820),
   cameraLookTarget: new THREE.Vector3(0, 0, 0),
   dynastyGroups: new Map(),
@@ -164,7 +165,8 @@ function stabilizeOrbit() {
     author: [120, 850],
   }[state.viewMode] || [320, 1400];
   state.orbit.radius = clamp(state.orbit.radius, radiusLimits[0], radiusLimits[1]);
-  state.orbit.phi = clamp(state.orbit.phi, 0.34, 1.18);
+  const phiLimits = mobileLayout.matches ? [0.18, 1.48] : [0.28, 1.34];
+  state.orbit.phi = clamp(state.orbit.phi, phiLimits[0], phiLimits[1]);
   const limit = Math.PI * 2;
   if (state.orbit.theta > limit || state.orbit.theta < -limit) {
     state.orbit.theta = ((state.orbit.theta % limit) + limit) % limit;
@@ -188,6 +190,7 @@ function setOverviewMode() {
   state.orbit.radius = mobileLayout.matches ? 1050 : 900;
   state.orbit.theta = mobileLayout.matches ? 0.04 : 0.08;
   state.orbit.phi = mobileLayout.matches ? 1 : 1.05;
+  state.panOffset.set(0, 0, 0);
   state.orbitTarget.set(0, 0, 0);
   state.cameraLookTarget.set(0, 0, 0);
   stabilizeOrbit();
@@ -205,6 +208,7 @@ function setDynastyMode(dynasty) {
   state.orbit.radius = 520;
   state.orbit.theta = 0.32;
   state.orbit.phi = 0.72;
+  state.panOffset.set(0, 0, 0);
   state.orbitTarget.copy(dynastyGroup.center);
   state.cameraLookTarget.copy(dynastyGroup.center);
   stabilizeOrbit();
@@ -220,6 +224,7 @@ function setFocusMode(authorGroup) {
   state.orbit.radius = 330;
   state.orbit.theta = 0.55;
   state.orbit.phi = 0.82;
+  state.panOffset.set(0, 0, 0);
   state.orbitTarget.copy(authorGroup.center);
   state.cameraLookTarget.copy(authorGroup.center);
   stabilizeOrbit();
@@ -985,16 +990,20 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
       text: author.authorName, position: author.mesh.position, kind: 'author', key: `author:${author.dynasty}:${author.authorName}`,
       dynasty: author.dynasty, authorName: author.authorName, active: true, priority: 130,
     });
-    state.focusPoemMeshes.forEach((mesh, index) => {
+    const towardCamera = author
+      ? state.camera.position.clone().sub(author.center).normalize()
+      : new THREE.Vector3(0, 0, 1);
+    state.focusPoemMeshes.forEach((mesh) => {
       const poem = mesh.userData.poem;
-      if (index < 12 || poem.id === selectedId || poem.id === state.hoveredPoemId) {
-        const active = poem.id === selectedId || poem.id === state.hoveredPoemId;
-        labels.push({
-          text: poem.title, position: mesh.position, kind: 'poem', active,
-          key: `poem:${poem.id}`, poemId: poem.id,
-          priority: active ? 150 : 70 - index + Math.min(8, poem.importance || 0),
-        });
-      }
+      const active = poem.id === selectedId || poem.id === state.hoveredPoemId;
+      const frontScore = author ? mesh.position.clone().sub(author.center).dot(towardCamera) : 0;
+      if (!active && frontScore < -8) return;
+      const cameraDistance = state.camera.position.distanceTo(mesh.position);
+      labels.push({
+        text: poem.title, position: mesh.position, kind: 'poem', active,
+        key: `poem:${poem.id}`, poemId: poem.id,
+        priority: active ? 180 : 100 + frontScore * 0.22 - cameraDistance * 0.012 + Math.min(10, poem.importance || 0),
+      });
     });
   }
 
@@ -1002,14 +1011,22 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
     ? 4
     : state.viewMode === 'dynasty'
       ? (state.orbit.radius > 850 ? 5 : state.orbit.radius > 620 ? 8 : 14)
-      : (state.orbit.radius > 650 ? 4 : state.orbit.radius > 470 ? 6 : state.orbit.radius > 340 ? 9 : 13);
+      : mobileLayout.matches
+        ? (state.orbit.radius > 650 ? 5 : state.orbit.radius > 470 ? 7 : state.orbit.radius > 340 ? 10 : 14)
+        : (state.orbit.radius > 650 ? 6 : state.orbit.radius > 470 ? 9 : state.orbit.radius > 340 ? 12 : 16);
   const candidates = labels.map((label) => {
     const projected = label.position.clone().project(state.camera);
-    const x = (projected.x * 0.5 + 0.5) * state.width;
-    const y = (-projected.y * 0.5 + 0.5) * state.height;
-    const visible = projected.z > -1 && projected.z < 1 && x > 25 && x < state.width - 25 && y > 20 && y < state.height - 35;
+    const rawX = (projected.x * 0.5 + 0.5) * state.width;
+    const rawY = (-projected.y * 0.5 + 0.5) * state.height;
     const width = clamp(Array.from(label.text).length * (label.kind === 'poem' ? 12 : 11) + 22, 48, 240);
     const height = label.kind === 'poem' ? 29 : 31;
+    const topSafeArea = mobileLayout.matches ? 146 : height / 2 + 8;
+    const bottomSafeArea = mobileLayout.matches ? 78 : height / 2 + 35;
+    const visible = projected.z > -1 && projected.z < 1
+      && rawX > -width * 0.35 && rawX < state.width + width * 0.35
+      && rawY > topSafeArea - height && rawY < state.height - bottomSafeArea + height;
+    const x = clamp(rawX, width / 2 + 8, state.width - width / 2 - 8);
+    const y = clamp(rawY, topSafeArea, state.height - bottomSafeArea);
     return { ...label, x, y, visible, width, height };
   }).filter((label) => label.visible).sort((a, b) => b.priority - a.priority);
 
@@ -1056,7 +1073,7 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
 }
 
 function updateOrbitalMotion(now, selectedAuthorKey) {
-  const motion = reducedMotion.matches || poemReaderEl?.classList.contains('is-open') ? 0 : 1;
+  const motion = reducedMotion.matches || poemReaderEl?.classList.contains('is-open') || state.drag.active ? 0 : 1;
   const frameDelta = Math.min(50, Math.max(0, now - state.lastMotionAt));
   state.lastMotionAt = now;
   state.dynastyMarkers.forEach((dynasty) => {
@@ -1385,7 +1402,7 @@ function animate3D(now = performance.now()) {
   if (state.trackedAuthorKey) {
     const trackedAuthor = state.authorGroups.get(state.trackedAuthorKey);
     if (trackedAuthor) {
-      state.orbitTarget.copy(trackedAuthor.center);
+      state.orbitTarget.copy(trackedAuthor.center).add(state.panOffset);
       updateCameraFromOrbit();
     }
   }
@@ -1418,7 +1435,7 @@ function hitTest3D(clientX, clientY) {
   return null;
 }
 
-function hitTestNearby(clientX, clientY, maxDistance = 34) {
+function hitTestNearby(clientX, clientY, maxDistance = mobileLayout.matches ? 42 : 34) {
   if (!state.camera) return null;
   const rect = canvas3d.getBoundingClientRect();
   const targets = [];
@@ -1682,8 +1699,15 @@ function panCamera(dx, dy) {
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(state.camera.quaternion);
   const up = new THREE.Vector3(0, 1, 0).applyQuaternion(state.camera.quaternion);
   const offset = right.multiplyScalar(-dx * worldPerPixel).add(up.multiplyScalar(dy * worldPerPixel));
-  state.orbitTarget.add(offset);
-  state.cameraLookTarget.add(offset);
+  const previousPan = state.panOffset.clone();
+  state.panOffset.add(offset);
+  const maxPan = mobileLayout.matches
+    ? (state.viewMode === 'author' ? 260 : state.viewMode === 'dynasty' ? 360 : 440)
+    : (state.viewMode === 'author' ? 210 : state.viewMode === 'dynasty' ? 300 : 380);
+  if (state.panOffset.length() > maxPan) state.panOffset.setLength(maxPan);
+  const appliedOffset = state.panOffset.clone().sub(previousPan);
+  state.orbitTarget.add(appliedOffset);
+  state.cameraLookTarget.add(appliedOffset);
 }
 
 function getTouchPair() {
