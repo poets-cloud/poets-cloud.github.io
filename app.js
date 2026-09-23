@@ -1004,6 +1004,7 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
     });
   }
 
+  const labelLimit = state.viewMode === 'overview' ? 4 : mobileLayout.matches ? 6 : 10;
   const candidates = labels.map((label) => {
     const projected = label.position.clone().project(state.camera);
     const rawX = (projected.x * 0.5 + 0.5) * state.width;
@@ -1011,68 +1012,40 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
     const width = clamp(Array.from(label.text).length * (label.kind === 'poem' ? 12 : 11) + 22, 48, 240);
     const height = mobileLayout.matches ? 34 : label.kind === 'poem' ? 29 : 31;
     const topSafeArea = mobileLayout.matches ? 146 : height / 2 + 8;
-    const bottomSafeArea = mobileLayout.matches ? 78 : height / 2 + 35;
+    const bottomSafeArea = mobileLayout.matches ? 150 : height / 2 + 35;
     const visible = projected.z > -1 && projected.z < 1
-      && rawX > -width * 0.35 && rawX < state.width + width * 0.35
-      && rawY > topSafeArea - height && rawY < state.height - bottomSafeArea + height;
-    const x = clamp(rawX, width / 2 + 8, state.width - width / 2 - 8);
-    const y = clamp(rawY, topSafeArea, state.height - bottomSafeArea);
+      && rawX > width / 2 + 8 && rawX < state.width - width / 2 - 8
+      && rawY > topSafeArea && rawY < state.height - bottomSafeArea;
+    const cameraDistance = state.camera.position.distanceTo(label.position);
     return {
-      ...label, x, y, anchorX: rawX, anchorY: rawY, visible, width, height,
-      topSafeArea, bottomSafeArea,
+      ...label, x: rawX, y: rawY, anchorX: rawX, anchorY: rawY, visible, width, height,
+      cameraDistance,
     };
-  }).filter((label) => label.visible).sort((a, b) => b.priority - a.priority || a.key.localeCompare(b.key));
+  }).filter((label) => label.visible)
+    .sort((a, b) => Number(b.active) - Number(a.active)
+      || a.cameraDistance - b.cameraDistance
+      || b.priority - a.priority
+      || a.key.localeCompare(b.key));
 
   const placed = [];
-  const padding = mobileLayout.matches ? 7 : 5;
-  const overlapArea = (first, second) => Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left))
-    * Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
-  const boxFor = (label, x, y) => ({
-    left: x - label.width / 2 - padding,
-    right: x + label.width / 2 + padding,
-    top: y - label.height / 2 - padding,
-    bottom: y + label.height / 2 + padding,
-  });
-
-  candidates.forEach((label) => {
-    const horizontalStep = clamp(label.width * 0.58, 38, 78);
-    const verticalStep = label.height + padding * 2 + 2;
-    const trials = [{ x: label.x, y: label.y, distance: 0 }];
-    const uniqueTrials = new Set([`${Math.round(label.x)}:${Math.round(label.y)}`]);
-    const maxRings = mobileLayout.matches ? 9 : 7;
-
-    for (let ring = 1; ring <= maxRings; ring += 1) {
-      for (let gridY = -ring; gridY <= ring; gridY += 1) {
-        for (let gridX = -ring; gridX <= ring; gridX += 1) {
-          if (Math.max(Math.abs(gridX), Math.abs(gridY)) !== ring) continue;
-          const x = clamp(label.x + gridX * horizontalStep, label.width / 2 + 8, state.width - label.width / 2 - 8);
-          const y = clamp(label.y + gridY * verticalStep, label.topSafeArea, state.height - label.bottomSafeArea);
-          const key = `${Math.round(x)}:${Math.round(y)}`;
-          if (uniqueTrials.has(key)) continue;
-          uniqueTrials.add(key);
-          trials.push({ x, y, distance: Math.hypot(x - label.x, y - label.y) });
-        }
-      }
-    }
-
-    let best = null;
-    trials.forEach((trial) => {
-      const box = boxFor(label, trial.x, trial.y);
-      const overlap = placed.reduce((total, item) => total + overlapArea(box, item.box), 0);
-      const score = overlap * 1000 + trial.distance;
-      if (!best || score < best.score) best = { ...trial, box, overlap, score };
-    });
-
-    label.x = best.x;
-    label.y = best.y;
-    label.displaced = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
-    placed.push({ label, box: best.box });
-  });
+  const padding = mobileLayout.matches ? 5 : 4;
+  for (const label of candidates) {
+    if (placed.length >= labelLimit) break;
+    const box = {
+      left: label.x - label.width / 2 - padding,
+      right: label.x + label.width / 2 + padding,
+      top: label.y - label.height / 2 - padding,
+      bottom: label.y + label.height / 2 + padding,
+    };
+    const overlaps = placed.some((item) => !(
+      box.right < item.box.left || box.left > item.box.right || box.bottom < item.box.top || box.top > item.box.bottom
+    ));
+    if (!overlaps) placed.push({ label, box });
+  }
 
   const existing = new Map([...cloudLabelsEl.querySelectorAll('.cloud-label')].map((element) => [element.dataset.labelKey, element]));
-  const existingLeaders = new Map([...cloudLabelsEl.querySelectorAll('.cloud-label-leader')].map((element) => [element.dataset.leaderKey, element]));
+  cloudLabelsEl.querySelectorAll('.cloud-label-leader').forEach((element) => element.remove());
   const desiredKeys = new Set();
-  const desiredLeaderKeys = new Set();
   placed.forEach(({ label }) => {
     desiredKeys.add(label.key);
     let element = existing.get(label.key);
@@ -1088,36 +1061,15 @@ function renderLabels(selectedAuthorKey, selectedDynasty) {
     element.style.top = `${label.y}px`;
     element.dataset.anchorX = `${label.anchorX}`;
     element.dataset.anchorY = `${label.anchorY}`;
-    element.dataset.displaced = label.displaced > 18 ? 'true' : 'false';
+    element.dataset.cameraDistance = `${label.cameraDistance}`;
     element.dataset.labelKind = label.kind;
     element.dataset.dynasty = label.dynasty || '';
     element.dataset.authorName = label.authorName || '';
     element.dataset.poemId = label.poemId || '';
     element.setAttribute('aria-label', label.kind === 'poem' ? `打开诗作《${label.text}》` : `进入${label.text}`);
-
-    if (label.displaced > 18) {
-      desiredLeaderKeys.add(label.key);
-      let leader = existingLeaders.get(label.key);
-      if (!leader) {
-        leader = document.createElement('span');
-        leader.className = 'cloud-label-leader';
-        leader.dataset.leaderKey = label.key;
-        leader.setAttribute('aria-hidden', 'true');
-        cloudLabelsEl.insertBefore(leader, cloudLabelsEl.firstChild);
-      }
-      const deltaX = label.x - label.anchorX;
-      const deltaY = label.y - label.anchorY;
-      leader.style.left = `${label.anchorX}px`;
-      leader.style.top = `${label.anchorY}px`;
-      leader.style.width = `${Math.hypot(deltaX, deltaY)}px`;
-      leader.style.transform = `rotate(${Math.atan2(deltaY, deltaX)}rad)`;
-    }
   });
   existing.forEach((element, key) => {
     if (!desiredKeys.has(key)) element.remove();
-  });
-  existingLeaders.forEach((element, key) => {
-    if (!desiredLeaderKeys.has(key)) element.remove();
   });
 }
 

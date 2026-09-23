@@ -257,29 +257,6 @@ h1 {
 
 .cloud-labels { position: absolute; z-index: 3; inset: 0; overflow: hidden; pointer-events: none; }
 
-.cloud-label-leader {
-  position: absolute;
-  z-index: 0;
-  height: 1px;
-  transform-origin: 0 50%;
-  background: linear-gradient(90deg, rgba(125, 211, 252, 0.58), rgba(125, 211, 252, 0.08));
-  box-shadow: 0 0 7px rgba(125, 211, 252, 0.18);
-  opacity: 0.68;
-  pointer-events: none;
-}
-
-.cloud-label-leader::before {
-  position: absolute;
-  top: -2px;
-  left: -2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: rgba(186, 230, 253, 0.88);
-  box-shadow: 0 0 7px rgba(125, 211, 252, 0.66);
-  content: '';
-}
-
 .cloud-label {
   position: absolute;
   z-index: 1;
